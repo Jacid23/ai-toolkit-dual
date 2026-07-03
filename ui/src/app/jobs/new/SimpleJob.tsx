@@ -32,6 +32,7 @@ import { FlipHorizontal2, FlipVertical2 } from 'lucide-react';
 import { handleModelArchChange } from './utils';
 import { IoFlaskSharp } from 'react-icons/io5';
 import { isMac } from '@/helpers/basic';
+import { gpuSelectOptions, isSplitSelection } from '@/utils/dualGpu';
 
 type Props = {
   jobConfig: JobConfig;
@@ -249,8 +250,11 @@ export default function SimpleJob({
                 label="GPU ID"
                 value={`${gpuIDs}`}
                 docKey="gpuids"
-                onChange={value => setGpuIDs(value)}
-                options={gpuList.map((gpu: any) => ({ value: `${gpu.index}`, label: `GPU #${gpu.index}` }))}
+                onChange={value => {
+                  setGpuIDs(value);
+                  setJobConfig(isSplitSelection(value), 'config.process[0].model.multi_gpu_split');
+                }}
+                options={gpuSelectOptions(gpuList)}
               />
             )}
             {disableSections.includes('trigger_word') ? null : (

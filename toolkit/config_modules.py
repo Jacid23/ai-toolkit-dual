@@ -699,6 +699,13 @@ class ModelConfig:
         self.layer_offloading_transformer_percent = kwargs.get("layer_offloading_transformer_percent", 1.0)
         self.layer_offloading_text_encoder_percent = kwargs.get("layer_offloading_text_encoder_percent", 1.0)
 
+        # dual-GPU build: split the transformer blocks across all visible CUDA
+        # devices (single process, no distributed backend) so BF16/FP16 models
+        # train without quantization. split_balance = fraction of blocks on the
+        # first device, which also hosts the embedders and optimizer state.
+        self.multi_gpu_split = kwargs.get("multi_gpu_split", False)
+        self.split_balance = kwargs.get("split_balance", 0.5)
+
         # can be used to load the extras like text encoder or vae from here
         # only setup for some models but will prevent having to download the te for
         # 20 different model variants

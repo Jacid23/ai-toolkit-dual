@@ -1820,6 +1820,14 @@ class BaseSDTrainProcess(BaseTrainProcess):
                     self.train_config.train_unet
                 )
 
+                if getattr(self.model_config, 'multi_gpu_split', False):
+                    # after a block split the wrapped modules live on several
+                    # devices; each network module must follow its own.
+                    from toolkit.multi_gpu_split import place_lora_modules_by_org_device
+                    moved = place_lora_modules_by_org_device(self.network)
+                    if moved:
+                        print_acc(f"multi_gpu_split: placed {moved} network modules on their block's device")
+
                 # we cannot merge in if quantized or offloading. note: torchao quantized weights can
                 # still be force merged at save time for the merge-and-reset method (see save logic),
                 # but we keep can_merge_in False here so sampling never merges in/out.

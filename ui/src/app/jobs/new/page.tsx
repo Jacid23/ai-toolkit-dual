@@ -20,6 +20,7 @@ import SimpleJob from './SimpleJob';
 import AdvancedConfigEditor from '@/components/AdvancedConfigEditor';
 import ErrorBoundary from '@/components/ErrorBoundary';
 import { apiClient } from '@/utils/api';
+import { gpuSelectOptions, isSplitSelection } from '@/utils/dualGpu';
 
 const isDev = process.env.NODE_ENV === 'development';
 
@@ -206,8 +207,11 @@ export default function TrainingForm() {
             <div className="hidden sm:block">
               <SelectInput
                 value={`${gpuIDs}`}
-                onChange={value => setGpuIDs(value)}
-                options={gpuList.map((gpu: any) => ({ value: `${gpu.index}`, label: `GPU #${gpu.index}` }))}
+                onChange={value => {
+                  setGpuIDs(value);
+                  setJobConfig(isSplitSelection(value), 'config.process[0].model.multi_gpu_split');
+                }}
+                options={gpuSelectOptions(gpuList)}
               />
             </div>
             <div className="hidden sm:block mx-4 bg-gray-200 dark:bg-gray-800 w-1 h-6"></div>

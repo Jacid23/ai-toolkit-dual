@@ -41,6 +41,12 @@ from toolkit.accelerator import unwrap_model
 from toolkit.metadata import get_meta_for_safetensors
 from toolkit.util.quantize import quantize, get_qtype, quantize_model
 from toolkit.memory_management import MemoryManager
+from toolkit.multi_gpu_split import (
+    attach_input_mover,
+    place_lora_modules_by_org_device,
+    split_blocks,
+    visible_cuda_devices,
+)
 
 from .src.mmdit import (
     DoubleSharedModulation,
@@ -319,6 +325,25 @@ class Krea2Model(BaseModel):
         dtype = self.torch_dtype
         self.print_and_status_update("Loading Krea 2 model")
 
+        if self.model_config.multi_gpu_split:
+            if self.model_config.quantize:
+                raise ValueError(
+                    "multi_gpu_split trains the transformer in full precision - remove quantize"
+                )
+            if self.model_config.layer_offloading:
+                raise ValueError(
+                    "multi_gpu_split and layer_offloading cannot be combined - remove one"
+                )
+            if self.model_config.low_vram:
+                raise ValueError(
+                    "multi_gpu_split and low_vram cannot be combined - remove low_vram"
+                )
+            if torch.cuda.device_count() < 2:
+                raise ValueError(
+                    f"multi_gpu_split needs at least 2 visible CUDA devices, found "
+                    f"{torch.cuda.device_count()}. Start the job with gpu_ids '0,1'."
+                )
+
         transformer = self._load_transformer()
 
         # load assistant lora if specified
@@ -348,7 +373,35 @@ class Krea2Model(BaseModel):
                 ],
             )
 
-        if self.model_config.low_vram:
+        if self.model_config.multi_gpu_split:
+            devices = visible_cuda_devices()
+            self.print_and_status_update(
+                f"Splitting transformer blocks across {len(devices)} GPUs"
+            )
+            # Input-side modules (first/tmlp/tproj/txtfusion/txtmlp/posemb) and
+            # the final layer stay on the main device; `last` gets an input
+            # mover so the block stack's output returns there and the forward
+            # result lands where the trainer and sampler expect it.
+            for name, child in transformer.named_children():
+                if name != "blocks":
+                    child.to(self.device_torch, dtype=dtype)
+            assignment = split_blocks(
+                transformer.blocks,
+                devices,
+                balance=self.model_config.split_balance,
+                dtype=dtype,
+            )
+            attach_input_mover(transformer.last, self.device_torch)
+            counts = {str(d): assignment.count(d) for d in dict.fromkeys(assignment)}
+            self.print_and_status_update(
+                "  - blocks per device: "
+                + ", ".join(f"{d}: {c}" for d, c in counts.items())
+            )
+            if self.assistant_lora is not None:
+                # the assistant network was force_to'd to the main device while
+                # merging; its modules must follow the blocks they wrap.
+                place_lora_modules_by_org_device(self.assistant_lora)
+        elif self.model_config.low_vram:
             self.print_and_status_update("Moving transformer to CPU")
             transformer.to("cpu")
         else:

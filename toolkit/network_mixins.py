@@ -293,6 +293,10 @@ class ToolkitModuleMixin:
         lora_input = x.to(self.lora_down.weight.dtype)
         lora_output = self._call_forward(lora_input)
         multiplier = self.network_ref().torch_multiplier
+        if multiplier.device != lora_output.device:
+            # multi_gpu_split: the shared multiplier lives on the main device
+            # but this module may compute on another one
+            multiplier = multiplier.to(lora_output.device)
 
         lora_output_batch_size = lora_output.size(0)
         multiplier_batch_size = multiplier.size(0)
