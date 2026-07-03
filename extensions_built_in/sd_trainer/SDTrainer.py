@@ -240,8 +240,9 @@ class SDTrainer(BaseSDTrainProcess):
 
     def hook_before_train_loop(self):
         super().hook_before_train_loop()
-        if self.is_caching_text_embeddings:
+        if self.is_caching_text_embeddings and not getattr(self.sd.model_config, 'multi_gpu_split', False):
             # make sure model is on cpu for this part so we don't oom.
+            # (multi_gpu_split: blocks stay pinned; the split leaves room for the TE)
             self.sd.unet.to('cpu')
         
         # cache unconditional embeds (blank prompt)

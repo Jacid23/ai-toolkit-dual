@@ -25,6 +25,7 @@ from toolkit.paths import KEYMAPS_ROOT
 from toolkit.prompt_utils import inject_trigger_into_prompt, PromptEmbeds, concat_prompt_embeds
 from toolkit.reference_adapter import ReferenceAdapter
 from toolkit.sd_device_states_presets import empty_preset
+from toolkit.multi_gpu_split import place_lora_modules_by_org_device
 from toolkit.train_tools import get_torch_dtype, apply_noise_offset
 import torch
 from toolkit.pipelines import CustomStableDiffusionXLPipeline
@@ -386,6 +387,8 @@ class BaseModel:
                 # move weights on to the device
                 self.assistant_lora.force_to(
                     self.device_torch, self.torch_dtype)
+                if self.is_multi_gpu_split:
+                    place_lora_modules_by_org_device(self.assistant_lora)
             else:
                 self.assistant_lora.is_active = False
 
@@ -394,6 +397,8 @@ class BaseModel:
             self.assistant_lora.is_active = True
             # move weights on to the device
             self.assistant_lora.force_to(self.device_torch, self.torch_dtype)
+            if self.is_multi_gpu_split:
+                place_lora_modules_by_org_device(self.assistant_lora)
 
         if network is not None:
             network = unwrap_model(self.network)
@@ -688,7 +693,8 @@ class BaseModel:
             network.train()
             network.multiplier = start_multiplier
 
-        self.unet.to(self.device_torch, dtype=self.torch_dtype)
+        if not self.is_multi_gpu_split:
+            self.unet.to(self.device_torch, dtype=self.torch_dtype)
         if network.is_merged_in:
             network.merge_out(merge_multiplier)
         # self.tokenizer.to(original_device_dict['tokenizer'])
@@ -910,13 +916,16 @@ class BaseModel:
                             f"Batch size of latents {latent_model_input.shape[0]} must be the same or half the batch size of timesteps {timestep.shape[0]}")
 
         # predict the noise residual
-        if self.unet.device != self.device_torch:
-            try:
-                self.unet.to(self.device_torch)
-            except Exception as e:
-                pass
-        if self.unet.dtype != self.torch_dtype:
-            self.unet = self.unet.to(dtype=self.torch_dtype)
+        if not self.is_multi_gpu_split:
+            # note: this compares e.g. 'cuda' vs 'cuda:0' and so may fire every
+            # step; harmless single-GPU, but it would collapse a block split
+            if self.unet.device != self.device_torch:
+                try:
+                    self.unet.to(self.device_torch)
+                except Exception as e:
+                    pass
+            if self.unet.dtype != self.torch_dtype:
+                self.unet = self.unet.to(dtype=self.torch_dtype)
             
         # check if get_noise prediction has guidance_embedding_scale
         # if it does not, we dont pass it
@@ -1441,6 +1450,12 @@ class BaseModel:
                 'requires_grad': self.refiner_unet.conv_in.weight.requires_grad,
             }
 
+    @property
+    def is_multi_gpu_split(self) -> bool:
+        # dual-GPU build: transformer blocks are pinned across several devices;
+        # wholesale unet moves would collapse them onto one GPU (and OOM)
+        return bool(getattr(self.model_config, 'multi_gpu_split', False))
+
     def restore_device_state(self):
         # restores the device state for all modules
         # this is useful for when we want to alter the state and restore it
@@ -1459,7 +1474,8 @@ class BaseModel:
             self.unet.train()
         else:
             self.unet.eval()
-        self.unet.to(state['unet']['device'])
+        if not self.is_multi_gpu_split:
+            self.unet.to(state['unet']['device'])
         if state['unet']['requires_grad']:
             self.unet.requires_grad_(True)
         else:

@@ -396,6 +396,14 @@ class SingleStreamDiT(nn.Module):
             nn.GELU(approximate="tanh"), nn.Linear(config.features, config.features * 6)
         )
 
+    def to(self, *args, **kwargs):
+        import os
+        if os.environ.get("AITK_SPLIT_DEBUG"):
+            import traceback
+            print(f"[split-debug] SingleStreamDiT.to({args}, {kwargs}) called from:")
+            traceback.print_stack()
+        return super().to(*args, **kwargs)
+
     @property
     def device(self) -> torch.device:
         return next(self.parameters()).device
@@ -442,18 +450,30 @@ class SingleStreamDiT(nn.Module):
 
         freqs = self.posemb(pos)
 
-        for block in self.blocks:
-            if self.gradient_checkpointing and torch.is_grad_enabled():
-                combined = checkpoint(
-                    block,
-                    combined,
-                    tvec,
-                    freqs,
-                    mask,
-                    use_reentrant=False,
-                )
-            else:
-                combined = block(combined, tvec, freqs, mask)
+        for _blk_i, block in enumerate(self.blocks):
+            try:
+                if self.gradient_checkpointing and torch.is_grad_enabled():
+                    combined = checkpoint(
+                        block,
+                        combined,
+                        tvec,
+                        freqs,
+                        mask,
+                        use_reentrant=False,
+                    )
+                else:
+                    combined = block(combined, tvec, freqs, mask)
+            except RuntimeError:
+                import os
+                if os.environ.get("AITK_SPLIT_DEBUG"):
+                    devs = {n: str(p.device) for n, p in list(block.named_parameters())[:3]}
+                    print(
+                        f"[split-debug] block {_blk_i}: params={devs} "
+                        f"combined={combined.device} tvec={tvec.device} "
+                        f"freqs={freqs.device} mask={mask.device} "
+                        f"hooks={len(block._forward_pre_hooks)}"
+                    )
+                raise
 
         final = self.last(combined, t)
         output = final[:, txtlen : txtlen + imglen, :]

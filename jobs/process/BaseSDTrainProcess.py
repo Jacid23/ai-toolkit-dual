@@ -733,8 +733,14 @@ class BaseSDTrainProcess(BaseTrainProcess):
         
         # # prepare all the models stuff for accelerator (hopefully we dont miss any)
         self.sd.vae = self.accelerator.prepare(self.sd.vae)
+        is_multi_gpu_split = getattr(self.model_config, 'multi_gpu_split', False)
         if self.sd.unet is not None:
-            self.sd.unet = self.accelerator.prepare(self.sd.unet)
+            if is_multi_gpu_split:
+                # accelerate's default device_placement would collapse the
+                # block-split unet onto a single device
+                self.sd.unet = self.accelerator.prepare(self.sd.unet, device_placement=[False])
+            else:
+                self.sd.unet = self.accelerator.prepare(self.sd.unet)
             # todo always tdo it?
             self.modules_being_trained.append(self.sd.unet)
         if self.sd.text_encoder is not None and self.train_config.train_text_encoder:
@@ -749,7 +755,11 @@ class BaseSDTrainProcess(BaseTrainProcess):
             self.modules_being_trained.append(self.sd.refiner_unet)
         # todo, do we need to do the network or will "unet" get it?
         if self.sd.network is not None:
-            self.sd.network = self.accelerator.prepare(self.sd.network)
+            if is_multi_gpu_split:
+                # network modules follow their wrapped block's device
+                self.sd.network = self.accelerator.prepare(self.sd.network, device_placement=[False])
+            else:
+                self.sd.network = self.accelerator.prepare(self.sd.network)
             self.modules_being_trained.append(self.sd.network)
         if self.adapter is not None and self.adapter_config.train:
             # todo adapters may not be a module. need to check
@@ -1724,7 +1734,8 @@ class BaseSDTrainProcess(BaseTrainProcess):
         else:
             text_encoder.requires_grad_(False)
             text_encoder.eval()
-        unet.to(self.device_torch, dtype=dtype)
+        if not getattr(self.model_config, 'multi_gpu_split', False):
+            unet.to(self.device_torch, dtype=dtype)
         unet.requires_grad_(False)
         unet.eval()
         vae = vae.to(torch.device('cpu'), dtype=dtype)
@@ -2109,7 +2120,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 is_unet_quantized = getattr(self.model_config, 'quantize', False)
                 is_quantized = is_unet_quantized or getattr(self.model_config, 'quantize_te', False)
 
-                if not is_unet_offloaded:
+                if not is_unet_offloaded and not getattr(self.model_config, 'multi_gpu_split', False):
                     self.sd.unet.to(self.device_torch)
 
                 cache_size_limit = getattr(self.model_config, 'cache_size_limit', None)

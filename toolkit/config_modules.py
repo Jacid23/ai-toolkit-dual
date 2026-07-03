@@ -704,7 +704,10 @@ class ModelConfig:
         # train without quantization. split_balance = fraction of blocks on the
         # first device, which also hosts the embedders and optimizer state.
         self.multi_gpu_split = kwargs.get("multi_gpu_split", False)
-        self.split_balance = kwargs.get("split_balance", 0.5)
+        # keep the first device lighter: it also hosts the embedders, optimizer
+        # state, EMA and sampling buffers (0.45 measured 31.9/32.6GB on a 5090
+        # with Krea2 + EMA - too tight)
+        self.split_balance = kwargs.get("split_balance", 0.4)
 
         # can be used to load the extras like text encoder or vae from here
         # only setup for some models but will prevent having to download the te for
