@@ -167,7 +167,13 @@ export default function JobOverview({ job }: JobOverviewProps) {
       {/* GPU Widget Panel */}
       <div className="md:col-span-1">
         <div>{isCPUInfoLoaded && cpuInfo && <CPUWidget cpu={cpuInfo} />}</div>
-        <div className="mt-4">{isGPUInfoLoaded && gpuList.length > 0 && <GPUWidget gpu={gpuList[0]} />}</div>
+        {/* dual-GPU build: show every GPU assigned to the job (split jobs use two) */}
+        {isGPUInfoLoaded &&
+          gpuList.map((gpu: any) => (
+            <div className="mt-4" key={gpu.index}>
+              <GPUWidget gpu={gpu} />
+            </div>
+          ))}
         {jobType === 'train' && (
           <div className="mt-4">
             <FilesWidget jobID={job.id} jobName={job.name} />
