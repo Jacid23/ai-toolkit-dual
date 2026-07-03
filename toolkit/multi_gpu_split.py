@@ -58,6 +58,84 @@ def visible_cuda_devices() -> List[torch.device]:
     return [torch.device(f"cuda:{i}") for i in range(torch.cuda.device_count())]
 
 
+def validate_split_config(model_config):
+    """Reject config combinations that fight the split. Call at the top of an
+    arch's ``load_model`` when ``model_config.multi_gpu_split`` is set."""
+    if model_config.quantize:
+        raise ValueError(
+            "multi_gpu_split trains the transformer in full precision - remove quantize"
+        )
+    if model_config.layer_offloading:
+        raise ValueError(
+            "multi_gpu_split and layer_offloading cannot be combined - remove one"
+        )
+    if model_config.low_vram:
+        raise ValueError(
+            "multi_gpu_split and low_vram cannot be combined - remove low_vram"
+        )
+    if torch.cuda.device_count() < 2:
+        raise ValueError(
+            f"multi_gpu_split needs at least 2 visible CUDA devices, found "
+            f"{torch.cuda.device_count()}. Start the job with gpu_ids '0,1'."
+        )
+
+
+def split_block_lists(
+    block_lists: List[nn.ModuleList],
+    devices: List[Union[str, torch.device]],
+    balance: float = 0.4,
+    dtype: torch.dtype = None,
+) -> List[torch.device]:
+    """Like ``split_blocks`` but for archs whose blocks live in several
+    sequential ModuleLists of different widths (e.g. FLUX-style
+    ``double_blocks`` + ``single_blocks``).
+
+    The lists are treated as one flat sequence in data-flow order and split by
+    cumulative *parameter count* (not block count), so a device boundary lands
+    at the ``balance`` fraction of the weights regardless of how uneven the
+    block sizes are. Assignment is monotonic - one boundary crossing per extra
+    device. Returns the flat per-block device assignment.
+    """
+    devices = [torch.device(d) for d in devices]
+    if len(devices) < 2:
+        raise ValueError("split_block_lists needs at least 2 devices")
+    all_blocks = [b for lst in block_lists for b in lst]
+    sizes = [sum(p.numel() for p in b.parameters()) for b in all_blocks]
+    total = float(sum(sizes))
+
+    if len(devices) == 2:
+        fractions = [balance, 1.0 - balance]
+    else:
+        rest = (1.0 - balance) / (len(devices) - 1)
+        fractions = [balance] + [rest] * (len(devices) - 1)
+
+    assignment: List[torch.device] = []
+    device_idx = 0
+    cumulative = 0.0
+    boundary = fractions[0] * total
+    for block, size in zip(all_blocks, sizes):
+        # move to the next device once this block's midpoint crosses the
+        # boundary, but never strand a later device with zero blocks
+        remaining = len(all_blocks) - len(assignment)
+        devices_left = len(devices) - device_idx - 1
+        if (
+            device_idx < len(devices) - 1
+            and cumulative + size / 2 > boundary
+            and len(assignment) > 0
+        ) or remaining == devices_left:
+            device_idx += 1
+            boundary += fractions[device_idx] * total
+        dev = devices[device_idx]
+        if dtype is not None:
+            block.to(dev, dtype=dtype)
+        else:
+            block.to(dev)
+        attach_input_mover(block, dev)
+        assignment.append(dev)
+        cumulative += size
+    return assignment
+
+
 def split_blocks(
     blocks: nn.ModuleList,
     devices: List[Union[str, torch.device]],

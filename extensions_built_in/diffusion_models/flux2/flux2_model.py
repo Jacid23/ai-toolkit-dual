@@ -25,6 +25,12 @@ from .src.autoencoder import AutoEncoder, AutoEncoderParams, AutoEncoderSmallDec
 from safetensors.torch import load_file, save_file
 from PIL import Image
 import torch.nn.functional as F
+from toolkit.multi_gpu_split import (
+    attach_input_mover,
+    split_block_lists,
+    validate_split_config,
+    visible_cuda_devices,
+)
 
 if TYPE_CHECKING:
     from toolkit.data_transfer_object.data_loader import DataLoaderBatchDTO
@@ -127,6 +133,8 @@ class Flux2Model(BaseModel):
     def load_model(self):
         dtype = self.torch_dtype
         self.print_and_status_update("Loading Flux2 model")
+        if self.model_config.multi_gpu_split:
+            validate_split_config(self.model_config)
         # will be updated if we detect a existing checkpoint in training folder
         model_path = self.model_config.name_or_path
         transformer_path = model_path
@@ -163,6 +171,28 @@ class Flux2Model(BaseModel):
             self.print_and_status_update("Quantizing Transformer")
             quantize_model(self, transformer)
             flush()
+        elif self.model_config.multi_gpu_split:
+            devices = visible_cuda_devices()
+            self.print_and_status_update(
+                f"Splitting transformer blocks across {len(devices)} GPUs"
+            )
+            # embedders/modulations/final layer stay on the main device; the
+            # final layer's input mover brings the block stack's output back.
+            for name, child in transformer.named_children():
+                if name not in ("double_blocks", "single_blocks"):
+                    child.to(self.device_torch, dtype=dtype)
+            assignment = split_block_lists(
+                [transformer.double_blocks, transformer.single_blocks],
+                devices,
+                balance=self.model_config.split_balance,
+                dtype=dtype,
+            )
+            attach_input_mover(transformer.final_layer, self.device_torch)
+            counts = {str(d): assignment.count(d) for d in dict.fromkeys(assignment)}
+            self.print_and_status_update(
+                "  - blocks per device (double+single): "
+                + ", ".join(f"{d}: {c}" for d, c in counts.items())
+            )
         else:
             transformer.to(self.device_torch, dtype=dtype)
         flush()
@@ -254,6 +284,8 @@ class Flux2Model(BaseModel):
         text_encoder[0].eval()
         if self.model_config.low_vram:
             pipe.transformer = pipe.transformer.to("cpu")
+        elif self.model_config.multi_gpu_split:
+            pass  # blocks are pinned to their devices
         else:
             pipe.transformer = pipe.transformer.to(self.device_torch)
         flush()
