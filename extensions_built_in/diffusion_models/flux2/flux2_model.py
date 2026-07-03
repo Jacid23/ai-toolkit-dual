@@ -311,7 +311,13 @@ class Flux2Model(BaseModel):
             is_guidance_distilled=self.flux2_is_guidance_distilled,
         )
 
-        pipeline = pipeline.to(self.device_torch)
+        if self.model_config.multi_gpu_split:
+            # a wholesale pipeline.to() would collapse the block split -
+            # move only the non-split components
+            pipeline.text_encoder.to(self.device_torch)
+            pipeline.vae.to(self.device_torch)
+        else:
+            pipeline = pipeline.to(self.device_torch)
 
         return pipeline
 
