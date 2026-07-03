@@ -80,6 +80,30 @@ def validate_split_config(model_config):
         )
 
 
+def place_non_split_modules(model: nn.Module, exclude_children: List[str], device, dtype: torch.dtype = None):
+    """Move every direct child of ``model`` except ``exclude_children`` (the
+    block lists) to ``device`` - plus root-level parameters and buffers, which
+    ``named_children`` misses (e.g. LTX2's ``scale_shift_table``)."""
+    device = torch.device(device)
+    for name, child in model.named_children():
+        if name in exclude_children:
+            continue
+        if dtype is not None:
+            child.to(device, dtype=dtype)
+        else:
+            child.to(device)
+    for name, p in list(model.named_parameters(recurse=False)):
+        if dtype is not None and p.is_floating_point():
+            p.data = p.data.to(device, dtype)
+        else:
+            p.data = p.data.to(device)
+    for name, b in list(model.named_buffers(recurse=False)):
+        if dtype is not None and b.is_floating_point():
+            model._buffers[name] = b.to(device, dtype)
+        else:
+            model._buffers[name] = b.to(device)
+
+
 def split_block_lists(
     block_lists: List[nn.ModuleList],
     devices: List[Union[str, torch.device]],

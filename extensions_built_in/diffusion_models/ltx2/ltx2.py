@@ -19,6 +19,13 @@ from toolkit.accelerator import unwrap_model
 from optimum.quanto import freeze
 from toolkit.util.quantize import quantize, get_qtype, quantize_model
 from toolkit.memory_management import MemoryManager
+from toolkit.multi_gpu_split import (
+    attach_input_mover,
+    place_non_split_modules,
+    split_blocks,
+    validate_split_config,
+    visible_cuda_devices,
+)
 from safetensors.torch import load_file
 from PIL import Image
 import huggingface_hub
@@ -241,6 +248,8 @@ class LTX2Model(BaseModel):
     def load_model(self):
         dtype = self.torch_dtype
         self.print_and_status_update("Loading LTX2 model")
+        if self.model_config.multi_gpu_split:
+            validate_split_config(self.model_config)
         model_path = self.model_config.name_or_path
         base_model_path = self.model_config.extras_name_or_path
 
@@ -523,7 +532,31 @@ class LTX2Model(BaseModel):
         tokenizer = [pipe.tokenizer]
 
         # leave it on cpu for now
-        if not self.low_vram:
+        if self.model_config.multi_gpu_split:
+            devices = visible_cuda_devices()
+            self.print_and_status_update(
+                f"Splitting transformer blocks across {len(devices)} GPUs"
+            )
+            # rope/embedders/projections + root scale_shift_table params stay
+            # on the main device; norm_out/audio_norm_out input movers bring
+            # both streams home so the output tail runs on the main device.
+            place_non_split_modules(
+                pipe.transformer, ["transformer_blocks"], self.device_torch, dtype
+            )
+            assignment = split_blocks(
+                pipe.transformer.transformer_blocks,
+                devices,
+                balance=self.model_config.split_balance,
+                dtype=dtype,
+            )
+            attach_input_mover(pipe.transformer.norm_out, self.device_torch)
+            attach_input_mover(pipe.transformer.audio_norm_out, self.device_torch)
+            counts = {str(d): assignment.count(d) for d in dict.fromkeys(assignment)}
+            self.print_and_status_update(
+                "  - blocks per device: "
+                + ", ".join(f"{d}: {c}" for d, c in counts.items())
+            )
+        elif not self.low_vram:
             pipe.transformer = pipe.transformer.to(self.device_torch)
 
         flush()
@@ -619,7 +652,20 @@ class LTX2Model(BaseModel):
         pipeline.transformer = unwrap_model(self.model)
         pipeline.text_encoder = unwrap_model(self.text_encoder[0])
 
-        pipeline = pipeline.to(self.device_torch)
+        if self.model_config.multi_gpu_split:
+            # a wholesale pipeline.to() would collapse the block split -
+            # move only the non-split components
+            for component in [
+                pipeline.vae,
+                pipeline.audio_vae,
+                pipeline.text_encoder,
+                pipeline.connectors,
+                pipeline.vocoder,
+            ]:
+                if component is not None:
+                    component.to(self.device_torch)
+        else:
+            pipeline = pipeline.to(self.device_torch)
 
         return pipeline
 
@@ -660,7 +706,8 @@ class LTX2Model(BaseModel):
 
         # reactivate progress bar since this is slooooow
         pipeline.set_progress_bar_config(disable=False)
-        pipeline = pipeline.to(self.device_torch)
+        if not self.model_config.multi_gpu_split:
+            pipeline = pipeline.to(self.device_torch)
 
         # make sure dimensions are valid
         bd = self.get_bucket_divisibility()
