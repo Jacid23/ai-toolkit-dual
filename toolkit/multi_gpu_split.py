@@ -155,6 +155,7 @@ def split_block_lists(
         else:
             block.to(dev)
         attach_input_mover(block, dev)
+        block._mgs_device = dev
         assignment.append(dev)
         cumulative += size
     return assignment
@@ -198,9 +199,43 @@ def split_blocks(
             else:
                 block.to(dev)
             attach_input_mover(block, dev)
+            block._mgs_device = dev
             assignment.append(dev)
             idx += 1
     return assignment
+
+
+def restore_split_placement(root: nn.Module, main_device, dtype: torch.dtype = None):
+    """Re-place a previously split model after a wholesale offload (the
+    caching presets legitimately move the whole model to CPU to make room for
+    the text encoder). Split blocks carry a ``_mgs_device`` tag from
+    ``split_blocks``/``split_block_lists``; everything untagged goes to
+    ``main_device``. Moves module-by-module so the full model never has to fit
+    on one GPU."""
+    main_device = torch.device(main_device)
+    tagged_lists = []
+    for name, child in root.named_children():
+        if isinstance(child, nn.ModuleList) and any(
+            hasattr(b, "_mgs_device") for b in child
+        ):
+            tagged_lists.append(name)
+            for block in child:
+                block.to(getattr(block, "_mgs_device", main_device))
+        else:
+            if dtype is not None:
+                child.to(main_device, dtype=dtype)
+            else:
+                child.to(main_device)
+    # root-level params/buffers
+    for name, p in list(root.named_parameters(recurse=False)):
+        p.data = p.data.to(main_device)
+    for name, b in list(root.named_buffers(recurse=False)):
+        root._buffers[name] = b.to(main_device)
+
+
+def is_split_model(root: nn.Module) -> bool:
+    """True if this model's blocks were placed by the splitter."""
+    return any(hasattr(m, "_mgs_device") for m in root.modules())
 
 
 def place_lora_modules_by_org_device(network) -> int:

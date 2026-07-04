@@ -25,7 +25,7 @@ from toolkit.paths import KEYMAPS_ROOT
 from toolkit.prompt_utils import inject_trigger_into_prompt, PromptEmbeds, concat_prompt_embeds
 from toolkit.reference_adapter import ReferenceAdapter
 from toolkit.sd_device_states_presets import empty_preset
-from toolkit.multi_gpu_split import place_lora_modules_by_org_device
+from toolkit.multi_gpu_split import place_lora_modules_by_org_device, restore_split_placement
 from toolkit.train_tools import get_torch_dtype, apply_noise_offset
 import torch
 from toolkit.pipelines import CustomStableDiffusionXLPipeline
@@ -1474,7 +1474,20 @@ class BaseModel:
             self.unet.train()
         else:
             self.unet.eval()
-        if not self.is_multi_gpu_split:
+        if self.is_multi_gpu_split:
+            # offloading the whole model to CPU (caching presets) is fine and
+            # frees both GPUs for the TE; going back to GPU must re-place the
+            # blocks across devices instead of collapsing onto one
+            target = torch.device(state['unet']['device'])
+            if target.type == 'cpu':
+                self.unet.to('cpu')
+            else:
+                restore_split_placement(unwrap_model(self.unet), self.device_torch)
+                if self.network is not None:
+                    place_lora_modules_by_org_device(self.network)
+                if self.assistant_lora is not None:
+                    place_lora_modules_by_org_device(self.assistant_lora)
+        else:
             self.unet.to(state['unet']['device'])
         if state['unet']['requires_grad']:
             self.unet.requires_grad_(True)
