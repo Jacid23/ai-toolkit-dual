@@ -19,13 +19,17 @@ set   reset=[0m
 git.exe remote get-url upstream >nul 2>&1
 if errorlevel 1 git.exe remote add upstream https://github.com/ostris/ai-toolkit.git
 
-echo %green%:: Fetching upstream (ostris/ai-toolkit)...%reset%
+echo %green%:: Fetching upstream (ostris) and origin (fork)...%reset%
 git.exe fetch upstream
 if errorlevel 1 goto :fail
+git.exe fetch origin
+if errorlevel 1 goto :fail
 
-echo %green%:: Fast-forwarding main to upstream/main...%reset%
+echo %green%:: Syncing main to upstream/main (mirror)...%reset%
 git.exe checkout main
 if errorlevel 1 goto :fail
+REM pick up whatever the fork already has, then ff to the newest upstream
+git.exe merge --ff-only origin/main
 git.exe merge --ff-only upstream/main
 if errorlevel 1 (
     echo %red%main has diverged from upstream - it must stay a pure mirror. Fix manually.%reset%
@@ -36,6 +40,15 @@ git.exe push origin main
 echo %green%:: Merging main into dual-gpu...%reset%
 git.exe checkout dual-gpu
 if errorlevel 1 goto :fail
+REM CRITICAL: sync local dual-gpu to the fork FIRST. A merge may have been done
+REM and pushed from another clone (e.g. the runtime install); without this the
+REM merge below would re-run against a stale local branch and throw phantom
+REM conflicts for work that is already resolved on the fork.
+git.exe merge --ff-only origin/dual-gpu
+if errorlevel 1 (
+    echo %red%local dual-gpu diverged from the fork - resolve manually before syncing.%reset%
+    goto :fail
+)
 git.exe merge main --no-edit
 if errorlevel 1 (
     echo.
