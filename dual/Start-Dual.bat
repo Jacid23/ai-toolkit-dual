@@ -47,21 +47,33 @@ set "path=%windir%\System32\WindowsPowerShell\v1.0;%path%"
 
 start /b powershell -NoProfile -ExecutionPolicy Bypass -Command "while(1){Start-Sleep 2;try{Invoke-WebRequest 'http://localhost:8676' -TimeoutSec 2 -UseBasicParsing -EA Stop|Out-Null;Start-Process 'http://localhost:8676';break}catch{}}"
 
-REM Supervisor loop: the UI's Restart button drops a .dual_restart flag then
-REM exits the server (concurrently --kill-others stops the worker too). We
-REM relaunch when the flag is present, otherwise the Shutdown button / a clean
-REM exit ends here. A restart rebuilds, so it picks up code changes.
-if exist "%~dp0..\.dual_restart" del "%~dp0..\.dual_restart" >nul 2>&1
-:runloop
+REM Supervisor loop. concurrently --kill-others makes the server exit as a
+REM unit (Restart button, Shutdown button, or a crash). Default on ANY exit is
+REM to relaunch, so crashes and the Restart button both auto-recover. ONLY an
+REM explicit .dual_shutdown flag stops the loop.
+cd /d %~dp0..
+if exist ".dual_restart" del ".dual_restart" >nul 2>&1
+if exist ".dual_shutdown" del ".dual_shutdown" >nul 2>&1
+
+REM first launch: full build + start
 cd /d %~dp0..\ui
 call npm run build_and_start_dual
 cd /d %~dp0..
-if exist ".dual_restart" (
-    del ".dual_restart" >nul 2>&1
+
+:runloop
+if exist ".dual_shutdown" (
+    del ".dual_shutdown" >nul 2>&1
     echo.
-    echo %green%::::::::::::: Restarting AI-Toolkit DUAL... :::::::::::::%reset%
-    echo.
-    goto runloop
+    echo %yellow%AI-Toolkit DUAL has shut down. Close this window.%reset%
+    goto :eof
 )
+if exist ".dual_restart" del ".dual_restart" >nul 2>&1
 echo.
-echo %yellow%AI-Toolkit DUAL has shut down. Close this window.%reset%
+echo %green%::::::::::::: Restarting AI-Toolkit DUAL... :::::::::::::%reset%
+echo.
+timeout /t 2 >nul
+REM restart is a fast bounce (no rebuild). For code changes, relaunch the shortcut.
+cd /d %~dp0..\ui
+call npm run start_dual
+cd /d %~dp0..
+goto runloop

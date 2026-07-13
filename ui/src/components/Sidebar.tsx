@@ -105,7 +105,7 @@ const Sidebar = () => {
       <div className="px-2 py-2 border-t border-gray-800 grid grid-cols-2 gap-2">
         <button
           onClick={() => {
-            if (confirm('Restart AI-Toolkit? The server will rebuild and come back in ~1-2 min.')) {
+            if (confirm('Restart the AI-Toolkit server? It bounces and comes back in a few seconds. Training jobs keep running.')) {
               fetch('/api/system/restart').catch(() => {});
             }
           }}

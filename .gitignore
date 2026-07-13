@@ -187,3 +187,4 @@ aitk_db.db
 .claude
 # dual build: launcher restart flag
 .dual_restart
+.dual_shutdown
