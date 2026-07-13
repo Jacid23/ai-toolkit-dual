@@ -1,4 +1,5 @@
 import processQueue from './actions/processQueue';
+import reapDeadJobs from './actions/reapDeadJobs';
 class CronWorker {
   interval: number;
   is_running: boolean;
@@ -25,6 +26,8 @@ class CronWorker {
   }
 
   async loop() {
+    // reconcile crashed/dead jobs first so the queue sees freed state this tick
+    await reapDeadJobs();
     await processQueue();
   }
 }

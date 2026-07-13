@@ -59,24 +59,30 @@ def visible_cuda_devices() -> List[torch.device]:
 
 
 def validate_split_config(model_config):
-    """Reject config combinations that fight the split. Call at the top of an
-    arch's ``load_model`` when ``model_config.multi_gpu_split`` is set."""
-    if model_config.quantize:
-        raise ValueError(
-            "multi_gpu_split trains the transformer in full precision - remove quantize"
-        )
-    if model_config.layer_offloading:
-        raise ValueError(
-            "multi_gpu_split and layer_offloading cannot be combined - remove one"
-        )
-    if model_config.low_vram:
-        raise ValueError(
-            "multi_gpu_split and low_vram cannot be combined - remove low_vram"
+    """Auto-correct config combinations that fight the split, instead of
+    failing the job. Call at the top of an arch's ``load_model`` when
+    ``model_config.multi_gpu_split`` is set. The only thing it can't fix is
+    missing hardware, so <2 GPUs is still a hard error."""
+    coerced = []
+    if getattr(model_config, "quantize", False):
+        model_config.quantize = False
+        coerced.append("quantize")
+    if getattr(model_config, "layer_offloading", False):
+        model_config.layer_offloading = False
+        coerced.append("layer_offloading")
+    if getattr(model_config, "low_vram", False):
+        model_config.low_vram = False
+        coerced.append("low_vram")
+    if coerced:
+        print(
+            "[multi_gpu_split] auto-disabled incompatible option(s): "
+            + ", ".join(coerced)
+            + " (the split trains the whole model in full precision across both cards)."
         )
     if torch.cuda.device_count() < 2:
         raise ValueError(
             f"multi_gpu_split needs at least 2 visible CUDA devices, found "
-            f"{torch.cuda.device_count()}. Start the job with gpu_ids '0,1'."
+            f"{torch.cuda.device_count()}. Start the job on both GPUs (gpu_ids '0,1')."
         )
 
 

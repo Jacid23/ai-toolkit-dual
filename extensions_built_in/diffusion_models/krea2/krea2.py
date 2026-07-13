@@ -50,6 +50,7 @@ from toolkit.multi_gpu_split import (
     attach_input_mover,
     place_lora_modules_by_org_device,
     split_blocks,
+    validate_split_config,
     visible_cuda_devices,
 )
 
@@ -391,23 +392,7 @@ class Krea2Model(BaseModel):
         self.print_and_status_update("Loading Krea 2 model")
 
         if self.model_config.multi_gpu_split:
-            if self.model_config.quantize:
-                raise ValueError(
-                    "multi_gpu_split trains the transformer in full precision - remove quantize"
-                )
-            if self.model_config.layer_offloading:
-                raise ValueError(
-                    "multi_gpu_split and layer_offloading cannot be combined - remove one"
-                )
-            if self.model_config.low_vram:
-                raise ValueError(
-                    "multi_gpu_split and low_vram cannot be combined - remove low_vram"
-                )
-            if torch.cuda.device_count() < 2:
-                raise ValueError(
-                    f"multi_gpu_split needs at least 2 visible CUDA devices, found "
-                    f"{torch.cuda.device_count()}. Start the job with gpu_ids '0,1'."
-                )
+            validate_split_config(self.model_config)
 
         transformer = self._load_transformer()
 
