@@ -703,7 +703,8 @@ export const modelArchs: ModelArch[] = [
     isVideoModel: true,
     defaults: {
       // default updates when [selected, unselected] in the UI
-      'config.process[0].model.name_or_path': ['Lightricks/LTX-2.3/ltx-2.3-22b-dev.safetensors', defaultNameOrPath],
+      'config.process[0].model.name_or_path': ['S:\\ComfyUI\\models\\Trainers\\LTX-2.3\\ltx-2.3-22b-dev.safetensors', defaultNameOrPath],
+      'config.process[0].model.te_name_or_path': ['S:\\ComfyUI\\models\\Trainers\\gemma-3-12b-it-unquantized', undefined],
       'config.process[0].model.quantize': [true, false],
       'config.process[0].model.quantize_te': [true, false],
       'config.process[0].model.low_vram': [true, false],
@@ -783,7 +784,7 @@ export const modelArchs: ModelArch[] = [
     group: 'image',
     defaults: {
       // default updates when [selected, unselected] in the UI
-      'config.process[0].model.name_or_path': ['black-forest-labs/FLUX.2-klein-base-9B', defaultNameOrPath],
+      'config.process[0].model.name_or_path': ['S:\\ComfyUI\\models\\Trainers\\FLUX.2-klein-base-9B', defaultNameOrPath],
       'config.process[0].model.quantize': [true, false],
       'config.process[0].model.quantize_te': [true, false],
       'config.process[0].model.low_vram': [true, false],
@@ -795,6 +796,8 @@ export const modelArchs: ModelArch[] = [
       'config.process[0].model.model_kwargs': [
         {
           match_target_res: false,
+          text_encoder_path: 'S:\\ComfyUI\\models\\Trainers\\FLUX.2-klein-base-9B\\text_encoder',
+          tokenizer_path: 'S:\\ComfyUI\\models\\Trainers\\FLUX.2-klein-base-9B\\tokenizer',
         },
         {},
       ],
@@ -1045,13 +1048,16 @@ export const modelArchs: ModelArch[] = [
     label: 'Krea 2 (raw)',
     group: 'image',
     defaults: {
-      'config.process[0].model.name_or_path': ['krea/Krea-2-Raw', defaultNameOrPath],
+      'config.process[0].model.name_or_path': ['S:\\ComfyUI\\models\\Trainers\\Krea-2-Raw', defaultNameOrPath],
       'config.process[0].model.quantize': [true, false],
       'config.process[0].model.quantize_te': [true, false],
       'config.process[0].train.timestep_type': ['linear', 'sigmoid'],
       'config.process[0].network.conv': [undefined, 16],
       'config.process[0].network.conv_alpha': [undefined, 16],
       'config.process[0].model.low_vram': [true, false],
+      'config.process[0].model.model_kwargs': [{ vae_path: 'S:\\ComfyUI\\models\\Trainers\\Krea-2-Raw' }, {}],
+      'config.process[0].sample.guidance_scale': [4, 4],
+      'config.process[0].sample.sample_steps': [25, 25],
     },
     disableSections: [
       'network.conv',
@@ -1066,15 +1072,16 @@ export const modelArchs: ModelArch[] = [
     label: 'Krea 2 Turbo (w/ Training Adapter)',
     group: 'image',
     defaults: {
-      'config.process[0].model.name_or_path': ['krea/Krea-2-Turbo', defaultNameOrPath],
+      'config.process[0].model.name_or_path': ['S:\\ComfyUI\\models\\Trainers\\Krea-2-Turbo', defaultNameOrPath],
       'config.process[0].model.quantize': [true, false],
       'config.process[0].model.quantize_te': [true, false],
       'config.process[0].train.timestep_type': ['linear', 'sigmoid'],
       'config.process[0].network.conv': [undefined, 16],
       'config.process[0].network.conv_alpha': [undefined, 16],
       'config.process[0].model.low_vram': [true, false],
+      'config.process[0].model.model_kwargs': [{ vae_path: 'S:\\ComfyUI\\models\\Trainers\\Krea-2-Turbo' }, {}],
       'config.process[0].model.assistant_lora_path': [
-        'ostris/krea2_turbo_training_adapter/krea2_turbo_training_adapter_v1.safetensors',
+        'S:\\ComfyUI\\models\\Trainers\\K2adapter\\krea2_turbo_training_adapter_v1.safetensors',
         undefined,
       ],
       'config.process[0].sample.guidance_scale': [1, 4],
