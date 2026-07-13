@@ -3,7 +3,7 @@
 import { useEffect } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { Home, Settings, BrainCircuit, Images, Plus, X } from 'lucide-react';
+import { Home, Settings, BrainCircuit, Images, Plus, X, Power, RotateCcw } from 'lucide-react';
 import { FaXTwitter, FaDiscord, FaYoutube } from 'react-icons/fa6';
 import { createGlobalState } from 'react-global-hooks';
 import ThemeToggle from './ThemeToggle';
@@ -100,6 +100,32 @@ const Sidebar = () => {
         </svg>
         <span className="uppercase text-sm font-medium tracking-wide">Support AI-Toolkit</span>
       </a>
+
+      {/* Dual-build server controls (launcher console is hidden, so control it here) */}
+      <div className="px-2 py-2 border-t border-gray-800 grid grid-cols-2 gap-2">
+        <button
+          onClick={() => {
+            if (confirm('Restart AI-Toolkit? The server will rebuild and come back in ~1-2 min.')) {
+              fetch('/api/system/restart').catch(() => {});
+            }
+          }}
+          className="flex items-center justify-center gap-2 px-3 py-2 text-sm text-gray-300 bg-gray-800 hover:bg-gray-700 rounded-lg transition-colors"
+          title="Rebuild and restart the server"
+        >
+          <RotateCcw className="w-4 h-4" /> Restart
+        </button>
+        <button
+          onClick={() => {
+            if (confirm('Shut down AI-Toolkit? Running training jobs keep going; only the UI/server stops.')) {
+              fetch('/api/system/shutdown').catch(() => {});
+            }
+          }}
+          className="flex items-center justify-center gap-2 px-3 py-2 text-sm text-red-300 bg-gray-800 hover:bg-red-900/40 rounded-lg transition-colors"
+          title="Shut the server down"
+        >
+          <Power className="w-4 h-4" /> Shutdown
+        </button>
+      </div>
 
       {/* Social links grid */}
       <div className="px-1 py-1 border-t border-gray-800">

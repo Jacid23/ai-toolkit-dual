@@ -40,12 +40,28 @@ if %errorlevel%==0 (
     echo  - %red%UPDATES%reset% available on the dual-gpu branch.%green% Run dual\Update-Dual.bat%reset%
     echo.
 )
-echo  - Stop the server with %green%Ctrl+C twice%reset%, not with %red%X%reset%
+echo  - Use the %green%Shutdown%reset% / %green%Restart%reset% buttons in the UI (bottom of the sidebar)
 echo.
 
 set "path=%windir%\System32\WindowsPowerShell\v1.0;%path%"
 
 start /b powershell -NoProfile -ExecutionPolicy Bypass -Command "while(1){Start-Sleep 2;try{Invoke-WebRequest 'http://localhost:8676' -TimeoutSec 2 -UseBasicParsing -EA Stop|Out-Null;Start-Process 'http://localhost:8676';break}catch{}}"
 
-cd ./ui
-npm run build_and_start_dual
+REM Supervisor loop: the UI's Restart button drops a .dual_restart flag then
+REM exits the server (concurrently --kill-others stops the worker too). We
+REM relaunch when the flag is present, otherwise the Shutdown button / a clean
+REM exit ends here. A restart rebuilds, so it picks up code changes.
+if exist "%~dp0..\.dual_restart" del "%~dp0..\.dual_restart" >nul 2>&1
+:runloop
+cd /d %~dp0..\ui
+call npm run build_and_start_dual
+cd /d %~dp0..
+if exist ".dual_restart" (
+    del ".dual_restart" >nul 2>&1
+    echo.
+    echo %green%::::::::::::: Restarting AI-Toolkit DUAL... :::::::::::::%reset%
+    echo.
+    goto runloop
+)
+echo.
+echo %yellow%AI-Toolkit DUAL has shut down. Close this window.%reset%
