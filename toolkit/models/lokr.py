@@ -331,6 +331,10 @@ class LokrModule(ToolkitModuleMixin, nn.Module):
 
         # we do not currently support split batch multipliers for lokr. Just do a mean
         multiplier = torch.mean(multiplier)
+        # multi_gpu_split: the shared multiplier lives on the main device but this
+        # module may compute on another card
+        if multiplier.device != lokr_weight.device:
+            multiplier = multiplier.to(lokr_weight.device)
 
         weight = (
             orig_weight
