@@ -1656,6 +1656,13 @@ class BaseModel:
             device = "cpu"
         elif role == "vae":
             device = self.vae_device_torch
+        # dual-GPU build: when splitting the transformer across both cards, it
+        # must train full-precision and resident, so override quant/offload/cpu
+        # for the transformer and let aitk_post_load do the block split instead.
+        multi_gpu_split = False
+        if getattr(mc, "multi_gpu_split", False) and role == "transformer":
+            multi_gpu_split = True
+            qtype, offload, device = None, 0.0, self.device_torch
         return dict(
             qtype=qtype,
             offload=offload,
@@ -1664,6 +1671,8 @@ class BaseModel:
             quantize_device=self.device_torch,
             base_model=self,
             use_comfy_weights=mc.model_kwargs.get("use_comfy_weights", True),
+            multi_gpu_split=multi_gpu_split,
+            split_balance=getattr(mc, "split_balance", 0.4),
         )
 
     def convert_lora_weights_before_save(self, state_dict):

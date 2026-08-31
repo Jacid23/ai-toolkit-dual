@@ -244,6 +244,8 @@ class OstrisModelMixin:
         base_model=None,
         quantize_device: Optional[torch.device] = None,
         exclude_quant_modules: Optional[List[str]] = None,
+        multi_gpu_split: bool = False,
+        split_balance: float = 0.4,
         **_load_only_kwargs,  # tolerate component_load_kwargs() extras
     ):
         """The post-load half of `load` — quantize (incl. "qtype|ara"), attach
@@ -367,7 +369,25 @@ class OstrisModelMixin:
             self.aitk_is_quantized = True
             self.aitk_qtype = qtype
 
-        if offload and offload > 0:
+        if multi_gpu_split:
+            # dual-GPU build: place the transformer blocks across all visible
+            # CUDA devices instead of on one card. Generic across archs via
+            # get_transformer_block_names(). Distributes weights AND activations,
+            # so BF16/FP16 models that don't fit one card can train.
+            from toolkit.multi_gpu_split import split_transformer, visible_cuda_devices
+
+            devices = visible_cuda_devices()
+            main_device = quantize_device if quantize_device is not None else device
+            status_fn(f"Splitting transformer blocks across {len(devices)} GPUs")
+            assignment = split_transformer(
+                self, devices, balance=split_balance, dtype=dtype, main_device=main_device
+            )
+            counts = {str(d): assignment.count(d) for d in dict.fromkeys(assignment)}
+            status_fn(
+                "  - blocks per device: "
+                + ", ".join(f"{d}: {c}" for d, c in counts.items())
+            )
+        elif offload and offload > 0:
             from toolkit.memory_management import MemoryManager
 
             # the manager stages layers to the COMPUTE device. `device` is the
