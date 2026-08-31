@@ -1,4 +1,5 @@
 import processQueue from './actions/processQueue';
+import reapDeadJobs from './actions/reapDeadJobs';
 import prisma from './prisma';
 
 // Journal mode for the main sqlite db. WAL keeps readers from blocking while
@@ -63,6 +64,8 @@ class CronWorker {
   }
 
   async loop() {
+    // reconcile crashed/dead jobs first so the queue sees freed state this tick
+    await reapDeadJobs();
     await processQueue();
   }
 }

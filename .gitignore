@@ -192,4 +192,5 @@ aitk_db.db-shm
 .claude
 original_repo
 .next
-testing/.model_test_outputs
+testing/.model_test_outputs.dual_restart
+.dual_shutdown

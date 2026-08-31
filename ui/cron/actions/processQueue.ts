@@ -3,6 +3,15 @@ import prisma from '../prisma';
 import { Job, Queue } from '@prisma/client';
 import startJob from './startJob';
 
+// dual-GPU build: a job started with gpu_ids "0,1" (split) occupies both
+// single-GPU queues, and vice versa - queues must not start jobs on a GPU
+// that an overlapping job is already using.
+const gpuIdsOverlap = (a: string, b: string): boolean => {
+  const aIds = a.split(',').map(s => s.trim());
+  const bIds = b.split(',').map(s => s.trim());
+  return aIds.some(id => bIds.includes(id));
+};
+
 export default async function processQueue() {
   const queues: Queue[] = await prisma.queue.findMany({
     orderBy: {
@@ -32,13 +41,14 @@ export default async function processQueue() {
       }
     }
     if (queue.is_running) {
-      // first see if one is already running, status of running or stopping
-      const runningJob: Job | null = await prisma.job.findFirst({
+      // first see if one is already running, status of running or stopping,
+      // on this queue's GPUs or any overlapping set (split jobs)
+      const activeJobs: Job[] = await prisma.job.findMany({
         where: {
           status: { in: ['running', 'stopping'] },
-          gpu_ids: queue.gpu_ids,
         },
       });
+      const runningJob: Job | null = activeJobs.find(job => gpuIdsOverlap(job.gpu_ids, queue.gpu_ids)) ?? null;
 
       if (runningJob) {
         // already running, nothing to do
