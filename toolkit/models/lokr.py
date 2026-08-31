@@ -392,6 +392,9 @@ class LokrModule(ToolkitModuleMixin, nn.Module):
             delta = delta * drop.to(delta.dtype)
 
         multiplier = torch.mean(self.network_ref().torch_multiplier).to(compute_dtype)
+        # multi_gpu_split: shared multiplier lives on the main card, delta may not
+        if multiplier.device != delta.device:
+            multiplier = multiplier.to(delta.device)
         delta = delta * multiplier
 
         return (base_out + delta).to(orig_dtype)
@@ -416,6 +419,10 @@ class LokrModule(ToolkitModuleMixin, nn.Module):
 
         # we do not currently support split batch multipliers for lokr. Just do a mean
         multiplier = torch.mean(multiplier)
+        # multi_gpu_split: the shared multiplier lives on the main device but this
+        # module may compute on another card
+        if multiplier.device != lokr_weight.device:
+            multiplier = multiplier.to(lokr_weight.device)
 
         weight = (
             orig_weight

@@ -961,13 +961,16 @@ class BaseModel:
                             f"Batch size of latents {latent_model_input.shape[0]} must be the same or half the batch size of timesteps {timestep.shape[0]}")
 
         # predict the noise residual
-        if self.unet.device != self.device_torch:
-            try:
-                self.unet.to(self.device_torch)
-            except Exception as e:
-                pass
-        if self.unet.dtype != self.torch_dtype:
-            self.unet = self.unet.to(dtype=self.torch_dtype)
+        if not self.is_multi_gpu_split:
+            # note: compares e.g. 'cuda' vs 'cuda:0' so may fire every step;
+            # harmless single-GPU but it would collapse a block split
+            if self.unet.device != self.device_torch:
+                try:
+                    self.unet.to(self.device_torch)
+                except Exception as e:
+                    pass
+            if self.unet.dtype != self.torch_dtype:
+                self.unet = self.unet.to(dtype=self.torch_dtype)
             
         # check if get_noise prediction has guidance_embedding_scale
         # if it does not, we dont pass it
@@ -1492,6 +1495,12 @@ class BaseModel:
                 'requires_grad': self.refiner_unet.conv_in.weight.requires_grad,
             }
 
+    @property
+    def is_multi_gpu_split(self) -> bool:
+        # dual-GPU build: transformer blocks are pinned across several devices;
+        # wholesale unet moves would collapse them onto one GPU (and OOM)
+        return bool(getattr(self.model_config, 'multi_gpu_split', False))
+
     def restore_device_state(self):
         # restores the device state for all modules
         # this is useful for when we want to alter the state and restore it
@@ -1510,7 +1519,22 @@ class BaseModel:
             self.unet.train()
         else:
             self.unet.eval()
-        self.unet.to(state['unet']['device'])
+        if self.is_multi_gpu_split:
+            # offloading the whole model to CPU (caching presets) is fine and
+            # frees both GPUs for the TE; returning to GPU must re-place the
+            # blocks across devices instead of collapsing onto one
+            from toolkit.multi_gpu_split import restore_split_placement, place_lora_modules_by_org_device
+            target = torch.device(state['unet']['device'])
+            if target.type == 'cpu':
+                self.unet.to('cpu')
+            else:
+                restore_split_placement(unwrap_model(self.unet), self.device_torch)
+                if getattr(self, 'network', None) is not None:
+                    place_lora_modules_by_org_device(self.network)
+                if getattr(self, 'assistant_lora', None) is not None:
+                    place_lora_modules_by_org_device(self.assistant_lora)
+        else:
+            self.unet.to(state['unet']['device'])
         if state['unet']['requires_grad']:
             self.unet.requires_grad_(True)
         else:

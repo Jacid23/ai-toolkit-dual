@@ -746,9 +746,15 @@ class BaseSDTrainProcess(BaseTrainProcess):
         self.accelerator.even_batches=False
         
         # # prepare all the models stuff for accelerator (hopefully we dont miss any)
+        is_multi_gpu_split = getattr(self.model_config, 'multi_gpu_split', False)
         self.sd.vae = self.accelerator.prepare(self.sd.vae)
         if self.sd.unet is not None:
-            self.sd.unet = self.accelerator.prepare(self.sd.unet)
+            if is_multi_gpu_split:
+                # accelerate's default device_placement would collapse the
+                # block-split unet onto a single device
+                self.sd.unet = self.accelerator.prepare(self.sd.unet, device_placement=[False])
+            else:
+                self.sd.unet = self.accelerator.prepare(self.sd.unet)
             # todo always tdo it?
             self.modules_being_trained.append(self.sd.unet)
         if self.sd.text_encoder is not None and self.train_config.train_text_encoder:
@@ -763,7 +769,11 @@ class BaseSDTrainProcess(BaseTrainProcess):
             self.modules_being_trained.append(self.sd.refiner_unet)
         # todo, do we need to do the network or will "unet" get it?
         if self.sd.network is not None:
-            self.sd.network = self.accelerator.prepare(self.sd.network)
+            if is_multi_gpu_split:
+                # network modules follow their wrapped block's device
+                self.sd.network = self.accelerator.prepare(self.sd.network, device_placement=[False])
+            else:
+                self.sd.network = self.accelerator.prepare(self.sd.network)
             self.modules_being_trained.append(self.sd.network)
         if self.adapter is not None and self.adapter_config.train:
             # todo adapters may not be a module. need to check
@@ -1959,6 +1969,14 @@ class BaseSDTrainProcess(BaseTrainProcess):
                     self.train_config.train_text_encoder,
                     self.train_config.train_unet
                 )
+
+                if getattr(self.model_config, 'multi_gpu_split', False):
+                    # after a block split the wrapped modules live on several
+                    # devices; each network module must follow its own
+                    from toolkit.multi_gpu_split import place_lora_modules_by_org_device
+                    moved = place_lora_modules_by_org_device(self.network)
+                    if moved:
+                        print_acc(f"multi_gpu_split: placed {moved} network modules on their block's device")
 
                 # we cannot merge in if quantized or offloading. note: torchao quantized weights can
                 # still be force merged at save time for the merge-and-reset method (see save logic),
