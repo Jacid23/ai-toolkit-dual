@@ -596,7 +596,14 @@ class LTX2Model(BaseModel):
         pipeline.transformer = unwrap_model(self.model)
         pipeline.text_encoder = unwrap_model(self.text_encoder[0])
 
-        pipeline = pipeline.to(self.device_torch)
+        if self.model_config.multi_gpu_split:
+            # move only non-split components; the transformer is split across cards
+            for component in [pipeline.vae, pipeline.audio_vae, pipeline.text_encoder,
+                              pipeline.connectors, pipeline.vocoder]:
+                if component is not None:
+                    component.to(self.device_torch)
+        else:
+            pipeline = pipeline.to(self.device_torch)
 
         return pipeline
 
@@ -637,7 +644,8 @@ class LTX2Model(BaseModel):
 
         # reactivate progress bar since this is slooooow
         pipeline.set_progress_bar_config(disable=False)
-        pipeline = pipeline.to(self.device_torch)
+        if not self.model_config.multi_gpu_split:
+            pipeline = pipeline.to(self.device_torch)
 
         # make sure dimensions are valid
         bd = self.get_bucket_divisibility()

@@ -420,6 +420,9 @@ class BaseModel:
                 # move weights on to the device
                 self.assistant_lora.force_to(
                     self.device_torch, self.torch_dtype)
+                if self.is_multi_gpu_split:
+                    from toolkit.multi_gpu_split import place_lora_modules_by_org_device
+                    place_lora_modules_by_org_device(self.assistant_lora)
             else:
                 self.assistant_lora.is_active = False
 
@@ -428,6 +431,9 @@ class BaseModel:
             self.assistant_lora.is_active = True
             # move weights on to the device
             self.assistant_lora.force_to(self.device_torch, self.torch_dtype)
+            if self.is_multi_gpu_split:
+                from toolkit.multi_gpu_split import place_lora_modules_by_org_device
+                place_lora_modules_by_org_device(self.assistant_lora)
 
         if network is not None:
             network = unwrap_model(self.network)

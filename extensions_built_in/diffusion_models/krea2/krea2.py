@@ -635,8 +635,12 @@ class Krea2Model(QwenImageVAEHolderMixin, BaseModel):
         return images
 
     def get_prompt_embeds(self, prompt, control_images=None) -> AdvancedPromptEmbeds:
-        if isinstance(prompt, str):
+        if not isinstance(prompt, (list, tuple)):
             prompt = [prompt]
+        # tolerate a missing/odd prompt: a sample config with no `neg` field
+        # defaults the negative prompt to bool False, which the text encoder
+        # can't concatenate. Coerce any non-string entry to an empty string.
+        prompt = [p if isinstance(p, str) else "" for p in prompt]
 
         if self.text_encoder.device == torch.device("cpu"):
             self.text_encoder.to(self.device_torch)
