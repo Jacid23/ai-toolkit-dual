@@ -10,6 +10,10 @@ export const resolvePythonPath = (): string => {
   const candidates: string[] = [];
 
   if (isWindows) {
+    // dual-GPU build: the embedded env is a sibling of the toolkit folder
+    // (C:\python_embeded_dual_v2), not a .venv inside it. Prefer it explicitly
+    // so jobs never launch with the wrong python off PATH.
+    candidates.push(path.join(TOOLKIT_ROOT, '..', 'python_embeded_dual_v2', 'python.exe'));
     candidates.push(path.join(TOOLKIT_ROOT, '.venv', 'Scripts', 'python.exe'));
     candidates.push(path.join(TOOLKIT_ROOT, 'venv', 'Scripts', 'python.exe'));
   } else {
