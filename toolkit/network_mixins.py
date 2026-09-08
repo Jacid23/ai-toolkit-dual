@@ -206,6 +206,17 @@ class ToolkitModuleMixin:
             try:
                 lx = self.lora_down(x)
             except RuntimeError as e:
+                import os
+                if os.environ.get("AITK_SPLIT_DEBUG"):
+                    org = getattr(self, 'org_module', [None])[0]
+                    orgdev = None
+                    try:
+                        orgdev = next(org.parameters()).device
+                    except Exception:
+                        pass
+                    print(f"[split-debug] LoRA {getattr(self,'lora_name','?')}: "
+                          f"x={x.device} lora_down.weight={self.lora_down.weight.device} "
+                          f"org_module={orgdev}")
                 print(f"Error in {self.__class__.__name__} lora_down")
                 raise e
 

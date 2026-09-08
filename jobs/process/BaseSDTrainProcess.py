@@ -1986,8 +1986,11 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 model_is_prequantized = any(
                     getattr(m, 'is_ostris_quantized', False) for m in unet.modules()
                 ) if unet is not None else False
-                if self.model_config.quantize or self.model_config.layer_offloading or model_is_prequantized:
+                if self.model_config.quantize or self.model_config.layer_offloading or model_is_prequantized \
+                        or getattr(self.model_config, 'multi_gpu_split', False):
                     # todo find a way around this
+                    # multi_gpu_split: merging in/out during sampling would move the
+                    # LoRA off its block's device and leave it mis-placed
                     self.network.can_merge_in = False
 
                 if is_lorm:

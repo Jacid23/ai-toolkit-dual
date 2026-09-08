@@ -858,6 +858,14 @@ class BaseModel:
             **kwargs,
     ):
         conditional_pred = None
+        if self.is_multi_gpu_split:
+            # re-assert the block split every step: sampling's device-state dance
+            # can move a (frozen) block off its split device while its trainable
+            # LoRA stays put with its optimizer state. Moving the frozen blocks
+            # back to their tags is free and keeps block+LoRA co-located. The
+            # LoRA is deliberately NOT touched (its optimizer state must not move).
+            from toolkit.multi_gpu_split import restore_split_placement
+            restore_split_placement(unwrap_model(self.unet), self.device_torch)
         # get the embeddings
         if text_embeddings is None and conditional_embeddings is None:
             raise ValueError(
@@ -1536,9 +1544,9 @@ class BaseModel:
             else:
                 restore_split_placement(unwrap_model(self.unet), self.device_torch)
                 if getattr(self, 'network', None) is not None:
-                    place_lora_modules_by_org_device(self.network)
+                    place_lora_modules_by_org_device(unwrap_model(self.network))
                 if getattr(self, 'assistant_lora', None) is not None:
-                    place_lora_modules_by_org_device(self.assistant_lora)
+                    place_lora_modules_by_org_device(unwrap_model(self.assistant_lora))
         else:
             self.unet.to(state['unet']['device'])
         if state['unet']['requires_grad']:

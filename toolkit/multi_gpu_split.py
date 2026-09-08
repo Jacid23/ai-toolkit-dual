@@ -41,15 +41,25 @@ def _move_to_device(obj, device: torch.device):
 
 
 def attach_input_mover(module: nn.Module, device: torch.device):
-    """Register a pre-hook that moves every tensor input to ``device``.
+    """Register a pre-hook that moves every tensor input to the module's OWN
+    current device.
+
+    Self-healing: it reads ``module``'s live parameter device on every call, so
+    it stays correct even if the module is re-placed later (e.g. the device-state
+    restore around sampling moves blocks back onto their split devices). Falls
+    back to the ``device`` captured at attach time for parameter-less modules.
 
     Fires inside ``torch.utils.checkpoint`` recompute as well, so gradient
     checkpointing needs no special handling.
     """
-    device = torch.device(device)
+    fallback = torch.device(device)
 
     def hook(mod, args, kwargs):
-        return _move_to_device(args, device), _move_to_device(kwargs, device)
+        dev = fallback
+        for p in mod.parameters(recurse=True):
+            dev = p.device
+            break
+        return _move_to_device(args, dev), _move_to_device(kwargs, dev)
 
     module.register_forward_pre_hook(hook, with_kwargs=True)
 
@@ -303,8 +313,11 @@ def place_lora_modules_by_org_device(network) -> int:
     split the wrapped Linears live on several devices and each LoRA module
     must follow its own. Returns how many modules were moved.
     """
+    import os
     moved = 0
+    total = 0
     for lora in network.get_all_modules():
+        total += 1
         org = getattr(lora, "org_module", None)
         if not org:
             continue
@@ -315,4 +328,6 @@ def place_lora_modules_by_org_device(network) -> int:
         if any(p.device != dev for p in lora.parameters()):
             lora.to(dev)
             moved += 1
+    if os.environ.get("AITK_SPLIT_DEBUG"):
+        print(f"[split-debug] place_lora: moved {moved}/{total} modules to their block device")
     return moved
