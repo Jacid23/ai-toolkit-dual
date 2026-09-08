@@ -378,9 +378,17 @@ class OstrisModelMixin:
 
             devices = visible_cuda_devices()
             main_device = quantize_device if quantize_device is not None else device
+            # block names may be declared on the arch model (e.g. krea2 -> ["blocks"])
+            # or on the transformer itself (v2-native archs); try both
+            block_names = None
+            if base_model is not None:
+                block_names = base_model.get_transformer_block_names()
+            if not block_names:
+                block_names = self.get_transformer_block_names()
             status_fn(f"Splitting transformer blocks across {len(devices)} GPUs")
             assignment = split_transformer(
-                self, devices, balance=split_balance, dtype=dtype, main_device=main_device
+                self, devices, balance=split_balance, dtype=dtype,
+                main_device=main_device, block_names=block_names,
             )
             counts = {str(d): assignment.count(d) for d in dict.fromkeys(assignment)}
             status_fn(

@@ -103,6 +103,7 @@ def split_transformer(
     balance: float = 0.4,
     dtype: torch.dtype = None,
     main_device=None,
+    block_names: List[str] = None,
 ) -> List[torch.device]:
     """Generic v2 split: place a model's transformer blocks across ``devices``
     using its ``get_transformer_block_names()`` declaration. Arch-agnostic — the
@@ -116,7 +117,7 @@ def split_transformer(
     devices = [torch.device(d) for d in devices]
     main_device = torch.device(main_device) if main_device is not None else devices[0]
 
-    names = model.get_transformer_block_names() or []
+    names = block_names or model.get_transformer_block_names() or []
     block_lists = [_resolve_module_list(model, n) for n in names]
     resolved = [(n, bl) for n, bl in zip(names, block_lists) if bl is not None]
     if not resolved:
