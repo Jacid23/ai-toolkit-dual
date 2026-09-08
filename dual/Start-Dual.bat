@@ -20,11 +20,11 @@ set   green=[92m
 set  yellow=[93m
 set   reset=[0m
 
-set "path=%~dp0..\..\python_embeded_dual;%~dp0..\..\python_embeded_dual\Scripts;%path%"
+set "path=%~dp0..\..\python_embeded_dual_v2;%~dp0..\..\python_embeded_dual_v2\Scripts;%path%"
 
-if not exist "%~dp0..\..\python_embeded_dual\" (
-    echo %warning%WARNING:%reset% 'python_embeded_dual' folder NOT found at %~dp0..\..
-    echo %green%Copy python_embeded to python_embeded_dual and rerun dual\Update-Dual.bat%reset%
+if not exist "%~dp0..\..\python_embeded_dual_v2\" (
+    echo %warning%WARNING:%reset% 'python_embeded_dual_v2' folder NOT found at %~dp0..\..
+    echo %green%Copy python_embeded to python_embeded_dual_v2 and rerun dual\Update-Dual.bat%reset%
     echo Press any key to Exit...&Pause>nul
     goto :eof
 )

@@ -20,7 +20,7 @@ set   green=[92m
 set  yellow=[93m
 set   reset=[0m
 
-set "path=%~dp0..\..\python_embeded_dual;%~dp0..\..\python_embeded_dual\Scripts;%path%"
+set "path=%~dp0..\..\python_embeded_dual_v2;%~dp0..\..\python_embeded_dual_v2\Scripts;%path%"
 set GIT_LFS_SKIP_SMUDGE=1
 
 echo.
@@ -40,8 +40,8 @@ if errorlevel 1 (
 echo.
 echo %green%::::::: Installing requirements and updating diffusers :::::::%reset%
 echo.
-"%~dp0..\..\python_embeded_dual\python.exe" -I -m pip uninstall diffusers -y
-"%~dp0..\..\python_embeded_dual\python.exe" -I -m pip install -r requirements.txt --no-cache --no-warn-script-location
+"%~dp0..\..\python_embeded_dual_v2\python.exe" -I -m pip uninstall diffusers -y
+"%~dp0..\..\python_embeded_dual_v2\python.exe" -I -m pip install -r requirements.txt --no-cache --no-warn-script-location
 
 echo.
 echo %green%::::::::::::::: Update completed :::::::::::::::%reset%
