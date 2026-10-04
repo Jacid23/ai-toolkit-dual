@@ -257,6 +257,31 @@ class OstrisModelMixin:
             base_model.print_and_status_update if base_model is not None else print_acc
         )
 
+        # live server: a pooled module already carrying this exact policy is
+        # done; a different policy re-applies on top (requantize / dequantize
+        # paths below handle the weights, offloading is detached first)
+        from toolkit.models.v2.pool import ComponentPool, _stable
+
+        policy = _stable(
+            dict(
+                qtype=qtype,
+                offload=offload,
+                dtype=dtype,
+                device=device,
+                quantize_device=quantize_device,
+                exclude=exclude_quant_modules,
+            )
+        )
+        if ComponentPool.current is not None:
+            if getattr(self, "_aitk_policy", None) == policy:
+                ComponentPool.current.touch_module(self)
+                return self
+            if hasattr(self, "_memory_manager"):
+                from toolkit.memory_management import MemoryManager
+
+                MemoryManager.detach(self)
+        self._aitk_policy = policy
+
         ara_path = None
         if qtype is not None and "|" in qtype:
             qtype, ara_path = qtype.split("|", 1)
@@ -456,6 +481,27 @@ class OstrisModelMixin:
         elif subfolder == "":
             subfolder = None
 
+        # live server: an identical source request returns the resident module
+        from toolkit.models.v2.pool import ComponentPool
+
+        pool = ComponentPool.current
+        pool_key = None
+        if pool is not None:
+            pool_key = ComponentPool.make_key(
+                cls,
+                name_or_path,
+                dtype=dtype,
+                config_path=config_path,
+                config=config,
+                subfolder=subfolder,
+                use_comfy_weights=use_comfy_weights,
+                qtype=qtype if quantize_on_load else None,
+                kwargs=kwargs,
+            )
+            resident = pool.get(pool_key)
+            if resident is not None:
+                return resident
+
         if (
             use_comfy_weights
             and not name_or_path.endswith(".safetensors")
@@ -501,6 +547,8 @@ class OstrisModelMixin:
 
         if device is not None:
             model.to(device)
+        if pool is not None and pool_key is not None:
+            pool.put(pool_key, model)
         return model
 
     @staticmethod
@@ -596,6 +644,12 @@ class OstrisModelMixin:
         checkpoints read from non-safetensors sources). ``config``, when
         given, is used directly (for models whose config comes from the
         holder, e.g. model_kwargs-driven archs)."""
+        # comfy repacks can carry ``<attn>.comfy_attention.config`` uint8 JSON
+        # blobs (e.g. {"attention": "comfy_kitchen_int8"}): ComfyUI runtime
+        # attention hints, not weights
+        state_dict = {
+            k: v for k, v in state_dict.items() if not k.endswith(".comfy_attention.config")
+        }
         state_dict = cls.convert_state_dict_on_load(state_dict)
         has_quant_markers = "scaled_fp8" in state_dict or any(
             k.endswith(".comfy_quant") for k in state_dict
@@ -652,6 +706,11 @@ class OstrisModelMixin:
         (and importer-assigned bias) legitimately report as missing keys."""
         from toolkit.util.ostris_quant import OstrisLinear
 
+        # Anything the importer already materialized is not missing, it is
+        # done: a convrot embedding becomes a plain nn.Embedding holding the
+        # unrotated table, so its key is gone from the state dict on purpose.
+        # Taken before the load, while everything else is still on meta.
+        preloaded = {n for n, p in model.named_parameters() if not p.is_meta}
         result = model.load_state_dict(state_dict, assign=True, strict=False)
         quantized_param_keys = set()
         for name, m in model.named_modules():
@@ -659,7 +718,11 @@ class OstrisModelMixin:
                 quantized_param_keys.add(f"{name}.weight")
                 if m.bias is not None:
                     quantized_param_keys.add(f"{name}.bias")
-        bad_missing = [k for k in result.missing_keys if k not in quantized_param_keys]
+        bad_missing = [
+            k
+            for k in result.missing_keys
+            if k not in quantized_param_keys and k not in preloaded
+        ]
         if bad_missing or result.unexpected_keys:
             raise ValueError(
                 f"{type(model).__name__} load mismatch: missing {bad_missing[:8]}, "
