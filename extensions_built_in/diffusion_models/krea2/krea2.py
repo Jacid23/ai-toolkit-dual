@@ -143,21 +143,54 @@ def _first_local(name, check=os.path.isdir):
     return None
 
 
+def _find_local_file(filename):
+    """A weights file by name in a MODELS_PATH root or one folder below it
+    (e.g. models/K2adapter/<filename>)."""
+    for root in LOCAL_MODEL_ROOTS:
+        p = os.path.join(root, filename)
+        if os.path.isfile(p):
+            return p
+        if os.path.isdir(root):
+            for sub in sorted(os.listdir(root)):
+                p = os.path.join(root, sub, filename)
+                if os.path.isfile(p):
+                    return p
+    return None
+
+
 def _prefer_local_copy(path):
-    """Swap an old ``<drive>:/.../Trainers/<name>`` path for
-    ``<MODELS_PATH root>/<name>`` when this install has its own copy (even if
-    the old drive still has one); anything else is returned unchanged."""
+    """Map a model path to this install's own copy under MODELS_PATH:
+      - old ``<drive>:/.../Trainers/<name>`` paths -> ``<root>/<name>``
+      - HF repo ids (``krea/Krea-2-Turbo``) -> ``<root>/Krea-2-Turbo``
+      - HF file paths (``ostris/<repo>/<file>.safetensors``) -> ``<root>/<repo>/<file>``
+        or the same file name one folder below a root (``K2adapter/<file>``)
+    Anything without a local copy is returned unchanged (HF downloads it)."""
     if not isinstance(path, str) or not path:
         return path
     norm = os.path.normpath(path)
     idx = norm.lower().rfind(os.sep + "trainers" + os.sep)
-    if idx < 0:
+    if idx >= 0:
+        rel = norm[idx + len(os.sep + "trainers" + os.sep):]
+        for root in LOCAL_MODEL_ROOTS:
+            local = os.path.join(root, rel)
+            if os.path.exists(local):
+                return local
         return path
-    rel = norm[idx + len(os.sep + "trainers" + os.sep):]
+    # HF id: relative "org/repo[/sub/path]" that is not a local path
+    if os.path.isabs(path) or os.path.exists(path) or "/" not in path:
+        return path
+    parts = [p for p in path.replace("\\", "/").split("/") if p]
+    if len(parts) < 2:
+        return path
+    rel = os.path.join(*parts[1:])  # drop the org
     for root in LOCAL_MODEL_ROOTS:
         local = os.path.join(root, rel)
         if os.path.exists(local):
             return local
+    if len(parts) > 2 and parts[-1].endswith((".safetensors", ".bin")):
+        found = _find_local_file(parts[-1])
+        if found:
+            return found
     return path
 
 
