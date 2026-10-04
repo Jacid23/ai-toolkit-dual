@@ -33,6 +33,7 @@ import { handleModelArchChange } from './utils';
 import { IoFlaskSharp } from 'react-icons/io5';
 import { isMac } from '@/helpers/basic';
 import { gpuSelectOptions, isSplitSelection } from '@/utils/dualGpu';
+import TextEncoderSelect, { supportsTextEncoderSelect } from '@/components/TextEncoderSelect';
 
 type Props = {
   jobConfig: JobConfig;
@@ -45,6 +46,7 @@ type Props = {
   gpuList: any;
   datasetOptions: any;
   isLoading?: boolean;
+  onArchChanged?: (arch: string) => void;
 };
 
 const isDev = process.env.NODE_ENV === 'development';
@@ -59,6 +61,7 @@ export default function SimpleJob({
   setGpuIDs,
   gpuList,
   datasetOptions,
+  onArchChanged,
   isLoading,
 }: Props) {
   const { archs: modelArchs, groupedModelOptions } = useModelArchs();
@@ -289,6 +292,7 @@ export default function SimpleJob({
               value={jobConfig.config.process[0].model.arch}
               onChange={value => {
                 handleModelArchChange(modelArchs, jobConfig.config.process[0].model.arch, value, jobConfig, setJobConfig);
+                onArchChanged?.(value);
               }}
               options={groupedModelOptions}
             />
@@ -329,6 +333,12 @@ export default function SimpleJob({
                   setJobConfig(value, 'config.process[0].model.assistant_lora_path');
                 }}
                 placeholder=""
+              />
+            )}
+            {supportsTextEncoderSelect(jobConfig.config.process[0].model.arch) && (
+              <TextEncoderSelect
+                value={jobConfig.config.process[0].model.model_kwargs?.text_encoder_path}
+                onChange={value => setJobConfig(value, 'config.process[0].model.model_kwargs.text_encoder_path')}
               />
             )}
             {modelArch?.additionalSections?.includes('model.unconditional_lora_path') && (

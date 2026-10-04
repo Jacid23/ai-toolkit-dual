@@ -4,9 +4,12 @@ import { useEffect, useState } from 'react';
 import useSettings from '@/hooks/useSettings';
 import { TopBar, MainContent } from '@/components/layout';
 import { apiClient } from '@/utils/api';
+import { SelectInput } from '@/components/formInputs';
+import { useModelArchs } from '@/extensions/modelArchs';
 
 export default function Settings() {
   const { settings, setSettings } = useSettings();
+  const { groupedModelOptions } = useModelArchs();
   const [status, setStatus] = useState<'idle' | 'saving' | 'success' | 'error'>('idle');
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -127,6 +130,42 @@ export default function Settings() {
                     className="w-full px-4 py-2 bg-gray-800 border border-gray-700 rounded-lg focus:ring-2 focus:ring-gray-600 focus:border-transparent"
                     placeholder="Enter models folder path"
                   />
+                </div>
+
+                <div>
+                  <label htmlFor="TEXT_ENCODERS_FOLDER" className="block text-sm font-medium mb-2">
+                    Custom Text Encoders Folder
+                    <div className="text-gray-500 text-sm ml-1">
+                      Custom text/CLIP encoders in this folder (HF-format folders or .safetensors files) show up in the
+                      Text Encoder dropdown when building a job. Jobs left on Default use the encoder bundled with the
+                      model. If blank, it will default to the text_encoders folder inside the models folder.
+                    </div>
+                  </label>
+                  <input
+                    type="text"
+                    id="TEXT_ENCODERS_FOLDER"
+                    name="TEXT_ENCODERS_FOLDER"
+                    value={settings.TEXT_ENCODERS_FOLDER}
+                    onChange={handleChange}
+                    className="w-full px-4 py-2 bg-gray-800 border border-gray-700 rounded-lg focus:ring-2 focus:ring-gray-600 focus:border-transparent"
+                    placeholder="Enter text encoders folder path"
+                  />
+                </div>
+
+                <div>
+                  <SelectInput
+                    label="Default Model for New Jobs"
+                    value={settings.DEFAULT_MODEL_ARCH}
+                    onChange={value => setSettings(prev => ({ ...prev, DEFAULT_MODEL_ARCH: value }))}
+                    options={[
+                      { label: 'Built-in', options: [{ value: '', label: 'Built-in default (Flex.1)' }] },
+                      ...groupedModelOptions,
+                    ]}
+                  />
+                  <div className="text-gray-500 text-sm ml-1 mt-1">
+                    New jobs open on this model, with your saved default for it applied (use Save as Model Default on
+                    the new job page).
+                  </div>
                 </div>
               </div>
             </div>

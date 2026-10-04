@@ -98,3 +98,11 @@ export const getModelsPath = async () => {
   if (row?.value && row.value !== '') return row.value;
   return path.join(process.cwd(), '..', 'models');
 };
+
+// TEXT_ENCODERS_FOLDER (dual build): where custom text encoders live for the job
+// page's Text Encoder dropdown. Blank = <models folder>/text_encoders.
+export const getTextEncodersFolder = async () => {
+  const row = await prisma.settings.findFirst({ where: { key: 'TEXT_ENCODERS_FOLDER' } });
+  if (row?.value && row.value.trim() !== '') return path.resolve(row.value.trim());
+  return path.join(await getModelsPath(), 'text_encoders');
+};

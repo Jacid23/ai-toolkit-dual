@@ -21,6 +21,14 @@ import AdvancedConfigEditor from '@/components/AdvancedConfigEditor';
 import ErrorBoundary from '@/components/ErrorBoundary';
 import { apiClient } from '@/utils/api';
 import { gpuSelectOptions, isSplitSelection } from '@/utils/dualGpu';
+import { useModelArchs } from '@/extensions/modelArchs';
+import {
+  useJobDefaults,
+  applyJobDefault,
+  extractJobDefault,
+  oemJobForArch,
+  SavedJobDefault,
+} from '@/utils/jobDefaults';
 
 const isDev = process.env.NODE_ENV === 'development';
 
@@ -39,6 +47,76 @@ export default function TrainingForm() {
   const [jobConfig, setJobConfig] = useNestedState<JobConfig>(objectCopy(migrateJobConfig(defaultJobConfig)));
   const [status, setStatus] = useState<'idle' | 'saving' | 'success' | 'error'>('idle');
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const { archs: modelArchs, isLoaded: isModelArchsLoaded } = useModelArchs();
+  const jobDefaults = useJobDefaults();
+  const openDefaultsApplied = useRef(false);
+  const [defaultsStatus, setDefaultsStatus] = useState<string | null>(null);
+
+  const flashDefaultsStatus = (msg: string) => {
+    setDefaultsStatus(msg);
+    setTimeout(() => setDefaultsStatus(null), 2000);
+  };
+
+  // keep the GPU picker and the split flag in step with a saved default
+  const applySavedGpu = (saved: SavedJobDefault | undefined) => {
+    const valid = gpuSelectOptions(gpuList).map(o => o.value);
+    if (saved?.gpu_ids && valid.includes(saved.gpu_ids)) {
+      setGpuIDs(saved.gpu_ids);
+      setJobConfig(isSplitSelection(saved.gpu_ids), 'config.process[0].model.multi_gpu_split');
+    } else {
+      setJobConfig(isSplitSelection(gpuIDs), 'config.process[0].model.multi_gpu_split');
+    }
+  };
+
+  // after the model arch changes, layer that model's saved default on top
+  const handleArchChanged = (arch: string) => {
+    const saved = jobDefaults.defaults[arch];
+    if (!saved) return;
+    setJobConfig((prev: JobConfig) => applyJobDefault(prev, saved));
+    applySavedGpu(saved);
+  };
+
+  const handleSaveModelDefault = async () => {
+    const arch = jobConfig.config.process[0].model.arch;
+    try {
+      await jobDefaults.save(arch, extractJobDefault(jobConfig, gpuIDs));
+      flashDefaultsStatus('Saved as default');
+    } catch (error) {
+      console.error('Error saving model default:', error);
+      alert('Failed to save model default.');
+    }
+  };
+
+  const handleResetModelDefault = async () => {
+    const arch = jobConfig.config.process[0].model.arch;
+    if (!confirm('Reset this model to its original (OEM) defaults and delete your saved default for it?')) return;
+    try {
+      await jobDefaults.remove(arch);
+      setJobConfig((prev: JobConfig) => oemJobForArch(modelArchs, prev, arch));
+      setJobConfig(isSplitSelection(gpuIDs), 'config.process[0].model.multi_gpu_split');
+      flashDefaultsStatus('Reset to OEM default');
+    } catch (error) {
+      console.error('Error resetting model default:', error);
+      alert('Failed to reset model default.');
+    }
+  };
+
+  // new job: open on the default model (Settings) with its saved default applied
+  useEffect(() => {
+    if (runId || cloneId || openDefaultsApplied.current) return;
+    if (!isSettingsLoaded || !isModelArchsLoaded || !jobDefaults.isLoaded || !isGPUInfoLoaded) return;
+    openDefaultsApplied.current = true;
+    const defaultArch = settings.DEFAULT_MODEL_ARCH;
+    const arch =
+      defaultArch && modelArchs.some(a => a.name === defaultArch) ? defaultArch : jobConfig.config.process[0].model.arch;
+    const saved = jobDefaults.defaults[arch];
+    setJobConfig((prev: JobConfig) => {
+      let next = arch !== prev.config.process[0].model.arch ? oemJobForArch(modelArchs, prev, arch) : prev;
+      if (saved) next = applyJobDefault(next, saved);
+      return next;
+    });
+    applySavedGpu(saved);
+  }, [runId, cloneId, isSettingsLoaded, isModelArchsLoaded, jobDefaults.isLoaded, isGPUInfoLoaded]);
 
   const handleImportConfig = () => {
     fileInputRef.current?.click();
@@ -137,8 +215,9 @@ export default function TrainingForm() {
 
   useEffect(() => {
     if (isGPUInfoLoaded) {
-      if (gpuIDs === null && gpuList.length > 0) {
-        setGpuIDs(`${gpuList[0].index}`);
+      if (gpuList.length > 0) {
+        // functional: a saved model default may have set the GPU this same render
+        setGpuIDs(prev => prev ?? `${gpuList[0].index}`);
       }
     }
   }, [gpuList, isGPUInfoLoaded]);
@@ -225,6 +304,26 @@ export default function TrainingForm() {
         )}
         {!showAdvancedView && (
           <>
+            {defaultsStatus && <div className="hidden md:block text-sm text-green-500 mr-3">{defaultsStatus}</div>}
+            <div className="hidden md:block mr-2">
+              <Button
+                className="text-gray-200 bg-gray-800 px-3 py-1 rounded-md"
+                onClick={handleSaveModelDefault}
+                title="Save these settings as the default for this model (name, trigger word and datasets are not saved)"
+              >
+                Save as Model Default
+              </Button>
+            </div>
+            <div className="hidden md:block">
+              <Button
+                className="text-gray-200 bg-gray-800 px-3 py-1 rounded-md"
+                onClick={handleResetModelDefault}
+                title="Delete the saved default for this model and go back to its original settings"
+              >
+                Reset to OEM Default
+              </Button>
+            </div>
+            <div className="hidden md:block mx-4 bg-gray-200 dark:bg-gray-800 w-1 h-6"></div>
             <div className="hidden sm:block">
               <SelectInput
                 value={`${jobConfig?.config.process[0].type}`}
@@ -328,6 +427,7 @@ export default function TrainingForm() {
               setGpuIDs={setGpuIDs}
               gpuList={gpuList}
               datasetOptions={datasetOptions}
+              onArchChanged={handleArchChanged}
               isLoading={!isSettingsLoaded || !isGPUInfoLoaded || datasetFetchStatus !== 'success'}
             />
           </ErrorBoundary>

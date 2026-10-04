@@ -8,6 +8,8 @@ export interface Settings {
   TRAINING_FOLDER: string;
   DATASETS_FOLDER: string;
   MODELS_PATH: string;
+  TEXT_ENCODERS_FOLDER: string;
+  DEFAULT_MODEL_ARCH: string;
 }
 
 export default function useSettings() {
@@ -16,6 +18,8 @@ export default function useSettings() {
     TRAINING_FOLDER: '',
     DATASETS_FOLDER: '',
     MODELS_PATH: '',
+    TEXT_ENCODERS_FOLDER: '',
+    DEFAULT_MODEL_ARCH: '',
   });
   const [isSettingsLoaded, setIsLoaded] = useState(false);
   useEffect(() => {
@@ -29,6 +33,8 @@ export default function useSettings() {
           TRAINING_FOLDER: data.TRAINING_FOLDER || '',
           DATASETS_FOLDER: data.DATASETS_FOLDER || '',
           MODELS_PATH: data.MODELS_PATH || '',
+          TEXT_ENCODERS_FOLDER: data.TEXT_ENCODERS_FOLDER || '',
+          DEFAULT_MODEL_ARCH: data.DEFAULT_MODEL_ARCH || '',
         });
         setIsLoaded(true);
       })

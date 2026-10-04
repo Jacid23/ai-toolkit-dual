@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import prisma from '@/server/prisma';
 import { defaultTrainFolder, defaultDatasetsFolder, defaultModelsFolder } from '@/paths';
-import { flushCache } from '@/server/settings';
+import { flushCache, getTextEncodersFolder } from '@/server/settings';
 
 export async function GET() {
   try {
@@ -25,6 +25,10 @@ export async function GET() {
       // if MODELS_PATH is not set, use default
       settingsObject.MODELS_PATH = defaultModelsFolder;
     }
+    // dual build: custom text encoders folder (blank -> <models>/text_encoders)
+    if (!settingsObject.TEXT_ENCODERS_FOLDER || settingsObject.TEXT_ENCODERS_FOLDER === '') {
+      settingsObject.TEXT_ENCODERS_FOLDER = await getTextEncodersFolder();
+    }
     return NextResponse.json(settingsObject);
   } catch (error) {
     return NextResponse.json({ error: 'Failed to fetch settings' }, { status: 500 });
@@ -34,7 +38,7 @@ export async function GET() {
 export async function POST(request: Request) {
   try {
     const body = await request.json();
-    const { HF_TOKEN, TRAINING_FOLDER, DATASETS_FOLDER, MODELS_PATH } = body;
+    const { HF_TOKEN, TRAINING_FOLDER, DATASETS_FOLDER, MODELS_PATH, TEXT_ENCODERS_FOLDER, DEFAULT_MODEL_ARCH } = body;
 
     // Upsert both settings
     await Promise.all([
@@ -57,6 +61,16 @@ export async function POST(request: Request) {
         where: { key: 'MODELS_PATH' },
         update: { value: MODELS_PATH },
         create: { key: 'MODELS_PATH', value: MODELS_PATH },
+      }),
+      prisma.settings.upsert({
+        where: { key: 'TEXT_ENCODERS_FOLDER' },
+        update: { value: TEXT_ENCODERS_FOLDER ?? '' },
+        create: { key: 'TEXT_ENCODERS_FOLDER', value: TEXT_ENCODERS_FOLDER ?? '' },
+      }),
+      prisma.settings.upsert({
+        where: { key: 'DEFAULT_MODEL_ARCH' },
+        update: { value: DEFAULT_MODEL_ARCH ?? '' },
+        create: { key: 'DEFAULT_MODEL_ARCH', value: DEFAULT_MODEL_ARCH ?? '' },
       }),
     ]);
 

@@ -96,15 +96,21 @@ scheduler_config = {
 }
 
 # Defaults; both overridable via model.model_kwargs.
-# LOCAL MODEL ROUTING: Krea2 prefers local copies of its models, fastest drive
-# first, so training never reads from the slow J: HDD or the HuggingFace cache
-# (which also lives on J:). Search order is the roots below, then the HF repo id.
-#   - text encoder: the abliterated Qwen3-VL-4B (full HF-format folder)
-#   - VAE:          the vae/ subfolder of Krea-2-Raw
-# Job paths are routed too: any "<drive>:\...\Trainers\<name>" path in a job
-# (transformer, assistant LoRA, text_encoder_path, vae_path) is swapped for the
-# same <name> under C:\Models\Trainers when a complete copy exists there.
-LOCAL_MODEL_ROOTS = [r"C:\Models\Trainers", r"S:\ComfyUI\models\Trainers"]
+# LOCAL MODEL ROUTING (dual build): models live in this install's own models
+# folder (MODELS_PATH, ComfyUI layout). Nothing is read from other drives.
+#   - text encoder: model_kwargs.text_encoder_path (the UI dropdown) when set,
+#     otherwise the encoder bundled with the model (<name_or_path>/text_encoder),
+#     otherwise the HF repo below.
+#   - VAE: model_kwargs.vae_path, else the model's own vae/, else the HF repo.
+# Job paths from old installs ("<drive>:/.../Trainers/<name>") are swapped
+# for the same <name> under MODELS_PATH when it exists there.
+from toolkit.paths import MODELS_PATH
+
+LOCAL_MODEL_ROOTS = [
+    os.path.join(MODELS_PATH, "diffusion_models"),
+    os.path.join(MODELS_PATH, "text_encoders"),
+    MODELS_PATH,
+]
 
 
 def _vae_dir_has_weights(p) -> bool:
@@ -120,51 +126,42 @@ def _vae_dir_has_weights(p) -> bool:
     )
 
 
+def _te_dir_has_weights(p) -> bool:
+    """True if ``p`` is a local HF-format text encoder folder with weights."""
+    if not isinstance(p, str) or not os.path.isdir(p):
+        return False
+    if not os.path.isfile(os.path.join(p, "config.json")):
+        return False
+    return any(f.endswith((".safetensors", ".bin")) for f in os.listdir(p))
+
+
 def _first_local(name, check=os.path.isdir):
-    source = os.path.join(LOCAL_MODEL_ROOTS[-1], name)
     for root in LOCAL_MODEL_ROOTS:
         p = os.path.join(root, name)
-        if check(p) and _copy_is_complete(p, source):
+        if check(p):
             return p
     return None
 
 
-def _copy_is_complete(dst, src) -> bool:
-    """A local copy counts only once every weight file matches the source size,
-    so a copy still in progress is never picked up."""
-    if os.path.isfile(dst):
-        return not os.path.isfile(src) or os.path.getsize(dst) == os.path.getsize(src)
-    if not os.path.isdir(dst):
-        return False
-    for dirpath, _, files in os.walk(dst):
-        for f in files:
-            if not f.endswith((".safetensors", ".bin")):
-                continue
-            d = os.path.join(dirpath, f)
-            s = os.path.join(src, os.path.relpath(d, dst))
-            if os.path.isfile(s) and os.path.getsize(d) != os.path.getsize(s):
-                return False
-    return True
-
-
 def _prefer_local_copy(path):
-    """Swap ``<drive>:\\...\\Trainers\\<name>`` for ``C:\\Models\\Trainers\\<name>``
-    when a complete copy exists there; anything else is returned unchanged."""
+    """Swap an old ``<drive>:/.../Trainers/<name>`` path for
+    ``<MODELS_PATH root>/<name>`` when this install has its own copy (even if
+    the old drive still has one); anything else is returned unchanged."""
     if not isinstance(path, str) or not path:
         return path
     norm = os.path.normpath(path)
     idx = norm.lower().rfind(os.sep + "trainers" + os.sep)
     if idx < 0:
         return path
-    local = os.path.join(LOCAL_MODEL_ROOTS[0], norm[idx + len(os.sep + "trainers" + os.sep):])
-    if os.path.normcase(local) == os.path.normcase(norm):
-        return path
-    if os.path.exists(local) and _copy_is_complete(local, norm):
-        return local
+    rel = norm[idx + len(os.sep + "trainers" + os.sep):]
+    for root in LOCAL_MODEL_ROOTS:
+        local = os.path.join(root, rel)
+        if os.path.exists(local):
+            return local
     return path
 
 
-QWEN3_VL_PATH = _first_local("Huihui-Qwen3-VL-4B-Instruct-abliterated") or "Qwen/Qwen3-VL-4B-Instruct"
+QWEN3_VL_PATH = "Qwen/Qwen3-VL-4B-Instruct"
 QWEN_IMAGE_VAE_PATH = _first_local("Krea-2-Raw", _vae_dir_has_weights) or "Qwen/Qwen-Image"
 
 HF_TOKEN = os.getenv("HF_TOKEN", None)
@@ -297,16 +294,47 @@ class Krea2Model(QwenImageVAEHolderMixin, BaseModel):
         flush()
         return transformer
 
+    def _resolve_text_encoder_paths(self):
+        """(weights folder, tokenizer folder) for the text encoder.
+        model_kwargs.text_encoder_path wins (a folder, or a .safetensors inside
+        one); otherwise the encoder bundled with the model; otherwise HF."""
+        te_path = self.model_config.model_kwargs.get("text_encoder_path", None)
+        model_dir = self.model_config.name_or_path
+        if isinstance(te_path, str) and os.path.isfile(te_path):
+            te_path = os.path.dirname(te_path)
+        if not te_path:
+            bundled = os.path.join(model_dir, "text_encoder") if isinstance(model_dir, str) else None
+            te_path = bundled if _te_dir_has_weights(bundled) else QWEN3_VL_PATH
+        # tokenizer: the encoder folder when it has one, else the model's own
+        # tokenizer/ (Raw) or tokenizers/ (Turbo) folder next to text_encoder/
+        tok_path = te_path
+        if os.path.isdir(te_path) and not os.path.isfile(os.path.join(te_path, "tokenizer.json")):
+            parent = os.path.dirname(os.path.normpath(te_path))
+            for cand in (
+                os.path.join(parent, "tokenizer"),
+                os.path.join(parent, "tokenizers"),
+                os.path.join(model_dir, "tokenizer") if isinstance(model_dir, str) else "",
+                os.path.join(model_dir, "tokenizers") if isinstance(model_dir, str) else "",
+            ):
+                if cand and os.path.isfile(os.path.join(cand, "tokenizer.json")):
+                    tok_path = cand
+                    break
+            else:
+                tok_path = QWEN3_VL_PATH
+        return te_path, tok_path
+
     def _load_text_encoder(self):
         dtype = self.torch_dtype
-        te_path = self.model_config.model_kwargs.get("text_encoder_path", QWEN3_VL_PATH)
+        te_path, tok_path = self._resolve_text_encoder_paths()
         self.print_and_status_update(f"Loading Qwen3-VL text encoder from {te_path}")
+        if tok_path != te_path:
+            self.print_and_status_update(f"  - tokenizer from {tok_path}")
 
         tokenizer = AutoTokenizer.from_pretrained(
-            te_path, max_length=self.max_text_length, token=HF_TOKEN
+            tok_path, max_length=self.max_text_length, token=HF_TOKEN
         )
         processor = Qwen2TokenizerFast.from_pretrained(
-            te_path, max_length=self.max_text_length, token=HF_TOKEN
+            tok_path, max_length=self.max_text_length, token=HF_TOKEN
         )
         text_encoder = Qwen3VLTextEncoder.load_model(
             te_path, dtype=dtype, subfolder="", token=HF_TOKEN
@@ -316,7 +344,14 @@ class Krea2Model(QwenImageVAEHolderMixin, BaseModel):
             # Edit mode: reference images are encoded into the text embeddings,
             # so the vision tower stays. Swap its Conv3d patch_embed for an
             # equivalent GEMM (bf16 Conv3d has no fast cuDNN kernel).
-            vl_processor = AutoProcessor.from_pretrained(te_path, token=HF_TOKEN)
+            # a bundled model/text_encoder folder ships no image preprocessor
+            # config; the stock processor is identical for every Qwen3-VL-4B
+            vl_src = te_path
+            if os.path.isdir(te_path) and not os.path.isfile(
+                os.path.join(te_path, "preprocessor_config.json")
+            ):
+                vl_src = QWEN3_VL_PATH
+            vl_processor = AutoProcessor.from_pretrained(vl_src, token=HF_TOKEN)
             patch_qwen_vl_patch_embed(text_encoder)
         else:
             # We only ever encode text, so the vision tower is dead weight -- drop it to
@@ -328,7 +363,12 @@ class Krea2Model(QwenImageVAEHolderMixin, BaseModel):
         return tokenizer, processor, vl_processor, text_encoder
 
     def _load_vae(self):
-        vae_path = self.model_config.model_kwargs.get("vae_path", QWEN_IMAGE_VAE_PATH)
+        default_vae = (
+            self.model_config.name_or_path
+            if _vae_dir_has_weights(self.model_config.name_or_path)
+            else QWEN_IMAGE_VAE_PATH
+        )
+        vae_path = self.model_config.model_kwargs.get("vae_path", default_vae)
         # DUAL BUILD: if the requested folder's vae/ has no real weights (only a
         # config + preview images, as some model downloads leave behind), fall
         # back to the known-good local Qwen-Image VAE instead of crashing.
@@ -446,7 +486,7 @@ class Krea2Model(QwenImageVAEHolderMixin, BaseModel):
         ]
 
     def _route_local_models(self):
-        """Point this job's model paths at the local C: copies when present
+        """Point old-install model paths at this install's MODELS_PATH copies
         (see LOCAL_MODEL_ROOTS) and report where each piece loads from."""
         mc = self.model_config
         for attr in ("name_or_path", "assistant_lora_path"):
