@@ -1,4 +1,4 @@
-@echo off&&cd /d %~dp0..
+@echo off&&cd /d %~dp0..\..
 Title AI-Toolkit DUAL Update (pulls dual-gpu branch from the fork - never upstream directly)
 
 set PYTHONPATH=
@@ -20,7 +20,7 @@ set   green=[92m
 set  yellow=[93m
 set   reset=[0m
 
-set "path=%~dp0..\..\python_embeded_dual_v2;%~dp0..\..\python_embeded_dual_v2\Scripts;%path%"
+set "path=%~dp0..\..\..\python_embeded_dual_v2;%~dp0..\..\..\python_embeded_dual_v2\Scripts;%path%"
 set GIT_LFS_SKIP_SMUDGE=1
 
 echo.
@@ -40,12 +40,12 @@ if errorlevel 1 (
 echo.
 echo %green%::::::: Installing requirements and updating diffusers :::::::%reset%
 echo.
-"%~dp0..\..\python_embeded_dual_v2\python.exe" -I -m pip uninstall diffusers -y
-"%~dp0..\..\python_embeded_dual_v2\python.exe" -I -m pip install -r requirements.txt --no-cache --no-warn-script-location
+"%~dp0..\..\..\python_embeded_dual_v2\python.exe" -I -m pip uninstall diffusers -y
+"%~dp0..\..\..\python_embeded_dual_v2\python.exe" -I -m pip install -r requirements.txt --no-cache --no-warn-script-location
 
 echo.
 echo %green%::::::::::::::: Update completed :::::::::::::::%reset%
-echo %yellow%(UI rebuilds automatically on next dual\Start-Dual.bat)%reset%
+echo %yellow%(now run dual\Rebuild-Dual.bat on the runtime install to compile the UI)%reset%
 if "%~1"=="" (
     echo %yellow%::::::::::::::: Press any key to exit :::::::::::::::%reset%&Pause>nul
     exit

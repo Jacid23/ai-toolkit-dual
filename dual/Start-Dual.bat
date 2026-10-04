@@ -37,7 +37,7 @@ echo.
 git.exe fetch --quiet >nul 2>&1
 git.exe status -uno | findstr /C:"Your branch is behind" >nul
 if %errorlevel%==0 (
-    echo  - %red%UPDATES%reset% available on the dual-gpu branch.%green% Run dual\Update-Dual.bat%reset%
+    echo  - %red%UPDATES%reset% available on the dual-gpu branch.%green% Run dual\maintenance\Update-Dual.bat%reset%
     echo.
 )
 echo  - Use the %green%Shutdown%reset% / %green%Restart%reset% buttons in the UI (bottom of the sidebar)
@@ -55,9 +55,16 @@ cd /d %~dp0..
 if exist ".dual_restart" del ".dual_restart" >nul 2>&1
 if exist ".dual_shutdown" del ".dual_shutdown" >nul 2>&1
 
-REM first launch: full build + start
+REM first launch: FAST start, NO build. Serves the existing ui\.next.
+REM After changing code, run dual\Rebuild-Dual.bat (it builds, then starts).
+if not exist "%~dp0..\ui\.next\" (
+    echo %warning%No UI build found - ui\.next is missing.%reset%
+    echo %green%Run dual\Rebuild-Dual.bat first to compile the UI, then use this.%reset%
+    echo Press any key to Exit...&Pause>nul
+    goto :eof
+)
 cd /d %~dp0..\ui
-call npm run build_and_start_dual
+call npm run start_dual
 cd /d %~dp0..
 
 :runloop

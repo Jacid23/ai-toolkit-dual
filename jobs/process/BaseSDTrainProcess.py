@@ -1874,7 +1874,14 @@ class BaseSDTrainProcess(BaseTrainProcess):
         else:
             text_encoder.requires_grad_(False)
             text_encoder.eval()
-        unet.to(self.device_torch, dtype=dtype)
+        if self.sd.is_multi_gpu_split:
+            # The split already placed the transformer blocks across both cards.
+            # A wholesale unet.to(device) collapses all of them onto the main card
+            # (-> OOM at ~30GB). Re-assert the split placement instead.
+            from toolkit.multi_gpu_split import restore_split_placement
+            restore_split_placement(unwrap_model(unet), self.device_torch, dtype=dtype)
+        else:
+            unet.to(self.device_torch, dtype=dtype)
         unet.requires_grad_(False)
         unet.eval()
         vae = vae.to(torch.device('cpu'), dtype=dtype)

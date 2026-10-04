@@ -75,10 +75,13 @@ const SampleImageCard: React.FC<SampleImageCardProps> = ({
     let objectUrl: string | null = null;
 
     const timer = window.setTimeout(() => {
-      // ?thumb=1: the server sends the small pre-generated thumbnail when one
-      // exists, otherwise the full file. Videos without a thumb come back as
-      // video/* — abort the transfer and render the <video> element instead.
-      fetch(`/api/img/${encodeFilePathForUrl(imageUrl)}?thumb=1`, { signal: controller.signal })
+      // DUAL BUILD: sample grids are small (a few images per step), so load the
+      // FULL-RES image for stills instead of the 300px ?thumb=1 crop — the grid
+      // still scales it into the square card (object-cover), just sharp. Videos
+      // keep ?thumb=1 for a cheap poster frame; without a thumb they come back
+      // as video/* — abort the transfer and render the <video> element instead.
+      const thumbQuery = isItVideo ? '?thumb=1' : '';
+      fetch(`/api/img/${encodeFilePathForUrl(imageUrl)}${thumbQuery}`, { signal: controller.signal })
         .then(r => {
           if (!r.ok) throw new Error(`HTTP ${r.status}`);
           const contentType = r.headers.get('content-type') || '';

@@ -1,4 +1,4 @@
-@echo off&&cd /d %~dp0..
+@echo off&&cd /d %~dp0..\..
 Title AI-Toolkit DUAL - Sync upstream (ostris) into the dual-gpu branch
 
 REM Intended to run on the STAGING clone (T:\AItoolKit Builds\ai-toolkit-dual),
@@ -60,7 +60,7 @@ if errorlevel 1 (
 git.exe push origin dual-gpu
 
 echo.
-echo %green%:: Sync complete. Run dual\Update-Dual.bat on the runtime install to pick it up.%reset%
+echo %green%:: Sync complete. Run dual\maintenance\Update-Dual.bat on the runtime install to pick it up.%reset%
 goto :end
 
 :fail

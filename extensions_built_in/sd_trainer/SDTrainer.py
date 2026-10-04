@@ -294,9 +294,14 @@ class SDTrainer(BaseSDTrainProcess):
 
     def hook_before_train_loop(self):
         super().hook_before_train_loop()
-        if self.is_caching_text_embeddings and not getattr(self.sd.model_config, 'multi_gpu_split', False):
-            # make sure model is on cpu for this part so we don't oom.
-            # (multi_gpu_split: blocks stay pinned; the split leaves room for the TE)
+        if self.is_caching_text_embeddings:
+            # Offload the transformer to CPU while the text encoder caches so the
+            # ~9GB TE has room. This MUST include multi_gpu_split: the split does
+            # NOT leave enough headroom on the main card for the encoder (that was
+            # a wrong assumption and caused an OOM at TE load). Moving the whole
+            # unet to CPU is safe — the blocks keep their _mgs_device tags, and the
+            # train device-state preset re-places the split (restore_split_placement)
+            # before the training loop starts.
             self.sd.unet.to('cpu')
         
         # cache unconditional embeds (blank prompt)

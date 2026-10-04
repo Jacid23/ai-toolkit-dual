@@ -96,8 +96,76 @@ scheduler_config = {
 }
 
 # Defaults; both overridable via model.model_kwargs.
-QWEN3_VL_PATH = "Qwen/Qwen3-VL-4B-Instruct"
-QWEN_IMAGE_VAE_PATH = "Qwen/Qwen-Image"
+# LOCAL MODEL ROUTING: Krea2 prefers local copies of its models, fastest drive
+# first, so training never reads from the slow J: HDD or the HuggingFace cache
+# (which also lives on J:). Search order is the roots below, then the HF repo id.
+#   - text encoder: the abliterated Qwen3-VL-4B (full HF-format folder)
+#   - VAE:          the vae/ subfolder of Krea-2-Raw
+# Job paths are routed too: any "<drive>:\...\Trainers\<name>" path in a job
+# (transformer, assistant LoRA, text_encoder_path, vae_path) is swapped for the
+# same <name> under C:\Models\Trainers when a complete copy exists there.
+LOCAL_MODEL_ROOTS = [r"C:\Models\Trainers", r"S:\ComfyUI\models\Trainers"]
+
+
+def _vae_dir_has_weights(p) -> bool:
+    """True if ``p/vae`` holds real VAE weights (not just preview images).
+    A per-model checkpoint folder can ship a vae/ with only config + preview
+    thumbnails (e.g. Krea-2-Turbo), which breaks diffusers from_pretrained."""
+    if not isinstance(p, str) or not os.path.isdir(p):
+        return False  # HF repo id or missing path -> let the loader decide
+    vdir = os.path.join(p, "vae")
+    return any(
+        os.path.isfile(os.path.join(vdir, f))
+        for f in ("diffusion_pytorch_model.safetensors", "diffusion_pytorch_model.bin")
+    )
+
+
+def _first_local(name, check=os.path.isdir):
+    source = os.path.join(LOCAL_MODEL_ROOTS[-1], name)
+    for root in LOCAL_MODEL_ROOTS:
+        p = os.path.join(root, name)
+        if check(p) and _copy_is_complete(p, source):
+            return p
+    return None
+
+
+def _copy_is_complete(dst, src) -> bool:
+    """A local copy counts only once every weight file matches the source size,
+    so a copy still in progress is never picked up."""
+    if os.path.isfile(dst):
+        return not os.path.isfile(src) or os.path.getsize(dst) == os.path.getsize(src)
+    if not os.path.isdir(dst):
+        return False
+    for dirpath, _, files in os.walk(dst):
+        for f in files:
+            if not f.endswith((".safetensors", ".bin")):
+                continue
+            d = os.path.join(dirpath, f)
+            s = os.path.join(src, os.path.relpath(d, dst))
+            if os.path.isfile(s) and os.path.getsize(d) != os.path.getsize(s):
+                return False
+    return True
+
+
+def _prefer_local_copy(path):
+    """Swap ``<drive>:\\...\\Trainers\\<name>`` for ``C:\\Models\\Trainers\\<name>``
+    when a complete copy exists there; anything else is returned unchanged."""
+    if not isinstance(path, str) or not path:
+        return path
+    norm = os.path.normpath(path)
+    idx = norm.lower().rfind(os.sep + "trainers" + os.sep)
+    if idx < 0:
+        return path
+    local = os.path.join(LOCAL_MODEL_ROOTS[0], norm[idx + len(os.sep + "trainers" + os.sep):])
+    if os.path.normcase(local) == os.path.normcase(norm):
+        return path
+    if os.path.exists(local) and _copy_is_complete(local, norm):
+        return local
+    return path
+
+
+QWEN3_VL_PATH = _first_local("Huihui-Qwen3-VL-4B-Instruct-abliterated") or "Qwen/Qwen3-VL-4B-Instruct"
+QWEN_IMAGE_VAE_PATH = _first_local("Krea-2-Raw", _vae_dir_has_weights) or "Qwen/Qwen-Image"
 
 HF_TOKEN = os.getenv("HF_TOKEN", None)
 
@@ -261,6 +329,14 @@ class Krea2Model(QwenImageVAEHolderMixin, BaseModel):
 
     def _load_vae(self):
         vae_path = self.model_config.model_kwargs.get("vae_path", QWEN_IMAGE_VAE_PATH)
+        # DUAL BUILD: if the requested folder's vae/ has no real weights (only a
+        # config + preview images, as some model downloads leave behind), fall
+        # back to the known-good local Qwen-Image VAE instead of crashing.
+        if not _vae_dir_has_weights(vae_path) and _vae_dir_has_weights(QWEN_IMAGE_VAE_PATH):
+            self.print_and_status_update(
+                f"  - no VAE weights at '{vae_path}'; falling back to '{QWEN_IMAGE_VAE_PATH}'"
+            )
+            vae_path = QWEN_IMAGE_VAE_PATH
         self.print_and_status_update(f"Loading Qwen-Image VAE from {vae_path}")
         vae = QwenImageVAE.load_model(
             vae_path, dtype=self.vae_torch_dtype, token=HF_TOKEN
@@ -369,9 +445,27 @@ class Krea2Model(QwenImageVAEHolderMixin, BaseModel):
             "last*",
         ]
 
+    def _route_local_models(self):
+        """Point this job's model paths at the local C: copies when present
+        (see LOCAL_MODEL_ROOTS) and report where each piece loads from."""
+        mc = self.model_config
+        for attr in ("name_or_path", "assistant_lora_path"):
+            old = getattr(mc, attr, None)
+            new = _prefer_local_copy(old)
+            if new != old:
+                self.print_and_status_update(f"  - {attr}: routed to local copy {new}")
+                setattr(mc, attr, new)
+        for key in ("text_encoder_path", "vae_path"):
+            old = mc.model_kwargs.get(key)
+            new = _prefer_local_copy(old)
+            if new != old:
+                self.print_and_status_update(f"  - {key}: routed to local copy {new}")
+                mc.model_kwargs[key] = new
+
     def load_model(self):
         dtype = self.torch_dtype
         self.print_and_status_update("Loading Krea 2 model")
+        self._route_local_models()
 
         transformer = self._load_transformer()
 
