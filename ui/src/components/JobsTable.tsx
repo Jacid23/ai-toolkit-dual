@@ -220,10 +220,17 @@ export default function JobsTable({ onlyActive = false, job_type = null }: JobsT
     });
     jd['Idle'] = { name: 'Idle', jobs: [] };
     jobs.forEach(job => {
-      const gpu = gpuList.find(gpu => job.gpu_ids?.split(',').includes(gpu.index.toString())) as GpuInfo;
-      const key = `${gpu?.index || '0'}`;
-      if (['queued', 'running', 'stopping'].includes(job.status) && key in jd) {
-        jd[key].jobs.push(job);
+      // a split job (gpu_ids "0,1") occupies several cards -> list it under EACH
+      // GPU it uses, not just the first, so both cards show it as running.
+      const ids = job.gpu_ids?.split(',').map(s => s.trim()) ?? [];
+      const keys = gpuList
+        .filter(gpu => ids.includes(gpu.index.toString()))
+        .map(gpu => `${gpu.index}`);
+      const targetKeys = keys.length > 0 ? keys : ['0'];
+      if (['queued', 'running', 'stopping'].includes(job.status)) {
+        targetKeys.forEach(key => {
+          if (key in jd) jd[key].jobs.push(job);
+        });
       } else {
         jd['Idle'].jobs.push(job);
       }
@@ -289,28 +296,35 @@ export default function JobsTable({ onlyActive = false, job_type = null }: JobsT
         .filter(key => key !== 'Idle')
         .map(gpuKey => {
           const queue = queues.find(q => `${q.gpu_ids}` === gpuKey) as Queue;
+          // a split job runs on a combined queue ("0,1"), not the single-GPU queue,
+          // so this card counts as running if ANY running queue includes this GPU.
+          const runningQueue = queues.find(
+            q => q.is_running && `${q.gpu_ids}`.split(',').includes(gpuKey),
+          ) as Queue | undefined;
+          const isRunning = Boolean(queue?.is_running || runningQueue);
+          const activeQueue = runningQueue ?? queue;
           return (
             <div key={gpuKey} className="mb-6">
               <div
                 className={classNames(
                   'text-md flex flex-wrap gap-y-1 px-2 sm:px-4 py-1 rounded-t-lg',
-                  { 'bg-green-600 dark:bg-green-900': queue?.is_running },
-                  { 'bg-red-600 dark:bg-red-900': !queue?.is_running },
+                  { 'bg-green-600 dark:bg-green-900': isRunning },
+                  { 'bg-red-600 dark:bg-red-900': !isRunning },
                 )}
               >
                 <div className="flex items-center space-x-2 flex-1 min-w-0 py-2">
                   <h2 className="font-semibold text-white truncate">{jobsDict[gpuKey].name}</h2>
                   <span className="px-2 py-0.5 bg-gray-700 rounded-full text-xs text-gray-300 flex-shrink-0">
-                    # {queue?.gpu_ids}
+                    # {activeQueue?.gpu_ids ?? gpuKey}
                   </span>
                 </div>
                 <div className="text-sm text-gray-300 italic flex items-center flex-shrink-0">
-                  {queue?.is_running ? (
+                  {isRunning ? (
                     <>
                       <span className="text-green-100 dark:text-green-400 mr-2">Queue Running</span>
                       <button
                         onClick={async () => {
-                          await stopQueue(queue.gpu_ids as string);
+                          await stopQueue((activeQueue?.gpu_ids ?? gpuKey) as string);
                           refresh();
                         }}
                         className="ml-2 sm:ml-4 text-xs text-white bg-red-600 hover:bg-red-700 px-2 py-1 rounded"
@@ -340,7 +354,7 @@ export default function JobsTable({ onlyActive = false, job_type = null }: JobsT
                 isLoading={isLoading}
                 onRefresh={refresh}
                 theadClassName={
-                  queue?.is_running
+                  isRunning
                     ? 'bg-green-700 dark:bg-green-950 text-white dark:text-gray-400'
                     : 'bg-red-700 dark:bg-red-950 text-white dark:text-gray-400'
                 }

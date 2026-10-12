@@ -66,6 +66,22 @@ export const saveJobNow = (jobID: string) => {
   });
 };
 
+export const stopJobAtCheckpoint = (jobID: string) => {
+  return new Promise<void>((resolve, reject) => {
+    apiClient
+      .get(`/api/jobs/${jobID}/stop_at_checkpoint`)
+      .then(res => res.data)
+      .then(data => {
+        console.log('Job set to stop after next checkpoint:', data);
+        resolve();
+      })
+      .catch(error => {
+        console.error('Error setting job to stop at checkpoint:', error);
+        reject(error);
+      });
+  });
+};
+
 export const sampleJobNow = (jobID: string) => {
   return new Promise<void>((resolve, reject) => {
     apiClient

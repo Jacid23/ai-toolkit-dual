@@ -174,6 +174,31 @@ class DiffusionTrainer(SDTrainer):
             self.is_stopping = True
             raise Exception("Job returning to queue")
 
+    def should_stop_at_checkpoint(self):
+        if not self.is_ui_trainer:
+            return False
+        def _check():
+            with self._db_connect() as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    "SELECT stop_at_checkpoint FROM Job WHERE id = ?", (self.job_id,))
+                row = cursor.fetchone()
+                return False if row is None else row[0] == 1
+        return self._retry_db_operation(_check)
+
+    def maybe_stop_at_checkpoint(self):
+        # Called right after a checkpoint save (+ its samples). If the user clicked
+        # "Stop at checkpoint", clear the flag and stop cleanly (status 'stopped',
+        # fully resumable) — same end state as a normal stop.
+        if not self.is_ui_trainer:
+            return
+        if self.should_stop_at_checkpoint():
+            self.update_db_key("stop_at_checkpoint", 0)
+            self._run_async_operation(
+                self._update_status("stopped", "Stopped at checkpoint"))
+            self.is_stopping = True
+            raise Exception("Job stopped")
+
     def should_save(self):
         if not self.is_ui_trainer:
             return False

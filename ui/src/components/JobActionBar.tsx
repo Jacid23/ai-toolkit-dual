@@ -1,6 +1,6 @@
 import Link from 'next/link';
 import { useEffect, useRef, useState } from 'react';
-import { Eye, Trash2, Pen, Play, Pause, Cog, X, Copy, Save, OctagonX, Image } from 'lucide-react';
+import { Eye, Trash2, Pen, Play, Pause, Cog, X, Copy, Save, OctagonX, Image, Flag } from 'lucide-react';
 import { LuLoader } from 'react-icons/lu';
 import { Button } from '@headlessui/react';
 import { openConfirm } from '@/components/ConfirmModal';
@@ -13,6 +13,7 @@ import {
   markJobAsStopped,
   saveJobNow,
   sampleJobNow,
+  stopJobAtCheckpoint,
 } from '@/utils/jobs';
 import { startQueue } from '@/utils/queue';
 import { Menu, MenuButton, MenuItem, MenuItems } from '@headlessui/react';
@@ -31,7 +32,7 @@ interface JobActionBarProps {
   menuAnchor?: 'bottom' | 'top end';
 }
 
-type PendingAction = 'start' | 'remove' | 'stop' | 'delete' | 'save' | 'sample' | 'markStopped';
+type PendingAction = 'start' | 'remove' | 'stop' | 'stopAtCheckpoint' | 'delete' | 'save' | 'sample' | 'markStopped';
 
 // If the job never reports a state change (e.g. the request silently failed
 // server-side), unlock the bar after this long so it can't stay stuck.
@@ -157,6 +158,29 @@ export default function JobActionBar({
           className={actionButtonClass}
         >
           {pending === 'stop' ? spinner : <Pause className={iconSizeClass} />}
+        </Button>
+      )}
+      {canStop && (
+        <Button
+          disabled={isBusy}
+          onClick={() => {
+            if (!canStop || isBusy) return;
+            openConfirm({
+              title: 'Stop at Checkpoint',
+              message: `Keep training "${job.name}" until its next checkpoint, then save (with samples) and stop? You can walk away — it stops on its own and you CAN resume later.`,
+              type: 'info',
+              confirmText: 'Stop at checkpoint',
+              onConfirm: () =>
+                runAction('stopAtCheckpoint', async () => {
+                  await stopJobAtCheckpoint(job.id);
+                  if (onRefresh) onRefresh();
+                }),
+            });
+          }}
+          className={actionButtonClass}
+          title="Stop after the next checkpoint (save + samples) — walk away, it stops itself"
+        >
+          {pending === 'stopAtCheckpoint' ? spinner : <Flag className={iconSizeClass} />}
         </Button>
       )}
       {!hideView && (

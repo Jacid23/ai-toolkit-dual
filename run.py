@@ -119,6 +119,7 @@ def main():
         print_acc(f"Running {len(config_file_list)} job{'' if len(config_file_list) == 1 else 's'}")
 
     for config_file in config_file_list:
+        job = None
         try:
             job = get_job(config_file, args.name)
             job.run()
@@ -145,6 +146,17 @@ def main():
                 print_acc("Job stopped")
                 print_acc("========================================")
                 sys.exit(0)
+        finally:
+            # DUAL BUILD: always wipe this job's on-disk dataset caches on end
+            # (complete / stop / stop-at-checkpoint / error) so they never linger
+            # or go stale. Rebuilds in seconds next run.
+            if job is not None:
+                try:
+                    for _proc in getattr(job, 'process', []) or []:
+                        if hasattr(_proc, 'cleanup_dataset_caches'):
+                            _proc.cleanup_dataset_caches()
+                except Exception as _ce:
+                    print_acc(f"cache cleanup skipped: {_ce}")
 
 
 if __name__ == '__main__':

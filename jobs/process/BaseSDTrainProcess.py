@@ -279,6 +279,38 @@ class BaseSDTrainProcess(BaseTrainProcess):
         # override in subclass
         return generate_image_config_list
 
+    def maybe_stop_at_checkpoint(self):
+        # Overridden by the UI trainer (DiffusionTrainer) to stop cleanly after a
+        # checkpoint save (+ its samples) when the "stop at checkpoint" flag is set.
+        # No-op for non-UI runs.
+        pass
+
+    def cleanup_dataset_caches(self):
+        # DUAL BUILD: on job end (complete / stop / error) wipe the per-dataset
+        # on-disk caches this job wrote so they never linger or go stale between
+        # runs (they rebuild in seconds). GPU-config agnostic.
+        if not getattr(self.train_config, 'cleanup_cache_on_end', True):
+            return
+        import shutil
+        names = ('_t_e_cache', '_latent_cache', '_clip_vision_cache')
+        roots = set()
+        for ds in getattr(self, 'dataset_configs', None) or []:
+            fp = getattr(ds, 'folder_path', None)
+            if fp and os.path.isdir(fp):
+                roots.add(fp)
+        removed = 0
+        for root in roots:
+            for dirpath, dirnames, _ in os.walk(root):
+                for d in list(dirnames):
+                    if d in names:
+                        shutil.rmtree(os.path.join(dirpath, d), ignore_errors=True)
+                        removed += 1
+        if removed:
+            try:
+                print_acc(f"Cleaned {removed} dataset cache folder(s) on job end")
+            except Exception:
+                pass
+
     def sample(self, step=None, is_first=False):
         if not self.accelerator.is_main_process:
             return
@@ -2761,6 +2793,12 @@ class BaseSDTrainProcess(BaseTrainProcess):
                         self.ensure_params_requires_grad()
                         if self.progress_bar is not None:
                             self.progress_bar.unpause()
+
+                    # DUAL BUILD: "Stop at checkpoint" button — if requested, stop
+                    # cleanly HERE, now that the checkpoint save AND its samples have
+                    # finished, so you can walk away and resume later.
+                    if is_save_step:
+                        self.maybe_stop_at_checkpoint()
 
                     if self.logging_config.log_every and self.step_num % self.logging_config.log_every == 0:
                         with self.timer('log_to_tensorboard'):

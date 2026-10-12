@@ -4,13 +4,29 @@
 // across them (single job pooling the VRAM of both cards).
 
 export const gpuSelectOptions = (gpuList: any[]): { value: string; label: string }[] => {
-  const options = gpuList.map((gpu: any) => ({ value: `${gpu.index}`, label: `GPU #${gpu.index}` }));
-  if (gpuList.length >= 2) {
-    const indexes = gpuList.map((gpu: any) => gpu.index);
-    options.push({
-      value: indexes.join(','),
-      label: `GPU #${indexes.join(' + #')} (split)`,
-    });
+  const indexes = gpuList.map((gpu: any) => gpu.index);
+  // each single card first
+  const options = indexes.map((idx: number) => ({ value: `${idx}`, label: `GPU #${idx}` }));
+
+  // then EVERY multi-card subset (size >= 2), so the split can pool any
+  // combination of cards (e.g. 0+1, 0+2, 1+2, 0+1+2) rather than only "all of
+  // them". The chosen subset becomes gpu_ids -> CUDA_VISIBLE_DEVICES, and the
+  // comma in the value trips isSplitSelection() to set model.multi_gpu_split.
+  if (indexes.length >= 2) {
+    const subsets: number[][] = [];
+    const total = 1 << indexes.length;
+    for (let mask = 1; mask < total; mask++) {
+      const subset = indexes.filter((_: number, i: number) => mask & (1 << i));
+      if (subset.length >= 2) subsets.push(subset);
+    }
+    // tidy order: smaller groups first, then by card number
+    subsets.sort((a, b) => a.length - b.length || a[0] - b[0] || (a[1] ?? 0) - (b[1] ?? 0));
+    for (const subset of subsets) {
+      options.push({
+        value: subset.join(','),
+        label: `GPU #${subset.join(' + #')} (split)`,
+      });
+    }
   }
   return options;
 };
