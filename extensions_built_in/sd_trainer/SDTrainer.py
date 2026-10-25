@@ -16,6 +16,7 @@ from toolkit.clip_vision_adapter import ClipVisionAdapter
 from toolkit.config_modules import GenerateImageConfig
 from toolkit.data_loader import get_dataloader_datasets
 from toolkit.data_transfer_object.data_loader import DataLoaderBatchDTO, FileItemDTO
+from toolkit.dop_triggers import swap_dop_triggers
 from toolkit.dto import DTO
 from toolkit.guidance import get_targeted_guidance_loss, get_guidance_loss, GuidanceType
 from toolkit.image_utils import show_tensors, show_latents
@@ -94,7 +95,8 @@ class SDTrainer(BaseSDTrainProcess):
             has_dataset_trigger = any(
                 dataset.trigger_word is not None for dataset in self.dataset_configs
             )
-            if self.trigger_word is None and not has_dataset_trigger:
+            has_dop_triggers = len(self.train_config.diff_output_preservation_triggers) > 0
+            if self.trigger_word is None and not has_dataset_trigger and not has_dop_triggers:
                 raise ValueError("diff_output_preservation requires a trigger_word to be set")
             if self.network_config is None:
                 raise ValueError("diff_output_preservation requires a network to be set")
@@ -385,7 +387,10 @@ class SDTrainer(BaseSDTrainProcess):
                 if self.trigger_word is not None:
                     self.cached_trigger_embeds = self.encode_static_prompt(self.trigger_word)
                 if self.train_config.diff_output_preservation:
-                    self.cached_dop_class_embeds = self.encode_static_prompt(self.train_config.diff_output_preservation_class)
+                    dop_class = self.train_config.diff_output_preservation_class
+                    if not dop_class and self.train_config.diff_output_preservation_triggers:
+                        dop_class = self.train_config.diff_output_preservation_triggers[0][1]
+                    self.cached_dop_class_embeds = self.encode_static_prompt(dop_class)
                     self.diff_output_preservation_embeds = self.cached_dop_class_embeds
                 
                 self.cache_sample_prompts()
@@ -1865,6 +1870,9 @@ class SDTrainer(BaseSDTrainProcess):
                             if self.train_config.diff_output_preservation:
                                 # datasets can have their own trigger words, replace per item
                                 def replace_trigger_with_class(prompt, file_item):
+                                    if self.train_config.diff_output_preservation_triggers:
+                                        # several subjects: every trigger in the prompt gets its own class
+                                        return swap_dop_triggers(prompt, self.train_config.diff_output_preservation_triggers)
                                     trigger = file_item.trigger_word if file_item.trigger_word is not None else self.trigger_word
                                     if trigger is None:
                                         return prompt
@@ -2066,6 +2074,17 @@ class SDTrainer(BaseSDTrainProcess):
 
                 do_guidance_prior = False
 
+                # DOP can run every N steps; on the steps in between there is no
+                # preservation pass and, unless something else needs it, no prior pred
+                do_dop_this_step = self.train_config.diff_output_preservation and (
+                    self.step_num % self.train_config.diff_output_preservation_every == 0
+                )
+                do_prior_prediction = self.do_prior_prediction
+                if self.train_config.diff_output_preservation and not do_dop_this_step:
+                    if not (self.train_config.do_prior_divergence or getattr(self.sd, 'dopsd_self_ref', False)
+                            or self.train_config.blank_prompt_preservation):
+                        do_prior_prediction = False
+
                 if batch.unconditional_latents is not None:
                     # for this not that, we need a prior pred to normalize
                     guidance_type: GuidanceType = batch.file_items[0].dataset_config.guidance_type
@@ -2073,7 +2092,7 @@ class SDTrainer(BaseSDTrainProcess):
                         do_guidance_prior = True
 
                 if ((
-                        has_adapter_img and self.assistant_adapter and match_adapter_assist) or self.do_prior_prediction or do_guidance_prior or do_reg_prior or do_inverted_masked_prior or self.train_config.correct_pred_norm):
+                        has_adapter_img and self.assistant_adapter and match_adapter_assist) or do_prior_prediction or do_guidance_prior or do_reg_prior or do_inverted_masked_prior or self.train_config.correct_pred_norm):
                     with self.timer('prior predict'):
                         prior_embeds_to_use = conditional_embeds
                         # use diff_output_preservation embeds if doing dfe
@@ -2283,7 +2302,7 @@ class SDTrainer(BaseSDTrainProcess):
                             prior_pred=prior_to_calculate_loss,
                         )
                     
-                    if self.train_config.diff_output_preservation or self.train_config.blank_prompt_preservation:
+                    if do_dop_this_step or self.train_config.blank_prompt_preservation:
                         with torch.no_grad():
                             if self.train_config.diff_output_preservation:
                                 preservation_embeds = self.diff_output_preservation_embeds.expand_to_batch(noisy_latents.shape[0])

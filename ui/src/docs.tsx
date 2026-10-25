@@ -275,6 +275,19 @@ const docs: { [key: string]: ConfigDoc } = {
       </>
     ),
   },
+  'train.diff_output_preservation_triggers': {
+    title: 'DOP Subjects',
+    description: (
+      <>
+        For a LoRA of several people. List each trigger word with the class it stands for, separated by commas, eg.
+        "j@cid=a man, l3xi=a woman". In the preservation prompt every trigger is swapped for its own class, including
+        captions that name two people at once. When this is set it replaces the single Preservation Class. Pair it with
+        a side-by-side dataset made by scripts/build_dop_side_by_side.py (each person next to a stranger) to keep faces
+        apart inside one picture. DOP Every N Steps runs the preservation pass less often to save time; raise the
+        multiplier to match (every 2 steps at x2 is about the same pull as every step at x1).
+      </>
+    ),
+  },
   'train.blank_prompt_preservation': {
     title: 'Blank Prompt Preservation',
     description: (

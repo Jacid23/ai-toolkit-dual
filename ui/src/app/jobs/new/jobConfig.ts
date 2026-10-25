@@ -62,6 +62,8 @@ export const defaultJobConfig: JobConfig = {
         save: {
           dtype: 'bf16',
           save_every: 250,
+          save_start_step: 0, // don't save until this step (0 = from the start)
+          save_schedule: [], // custom save steps e.g. [2000,2100,2200]; empty = use save_every
           max_step_saves_to_keep: 4,
           save_format: 'diffusers',
           push_to_hub: false,

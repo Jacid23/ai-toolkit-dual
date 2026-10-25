@@ -4,6 +4,8 @@ export const defaultSampleConfig: SampleConfig = {
   sampler: 'flowmatch',
   sample_every: 250,
   sample_start_step: 0,
+  sample_schedule: [], // custom sample steps e.g. [500,1000,1500]; empty = use sample_every
+  sample_on_save: false, // true = sample at each checkpoint (ignores the above)
   width: 1024,
   height: 1024,
   samples: [

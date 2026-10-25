@@ -102,6 +102,8 @@ export interface NetworkConfig {
 export interface SaveConfig {
   dtype: string;
   save_every: number;
+  save_start_step?: number;
+  save_schedule?: number[];
   max_step_saves_to_keep: number;
   save_format: string;
   push_to_hub: boolean;
@@ -181,6 +183,9 @@ export interface TrainConfig {
   diff_output_preservation: boolean;
   diff_output_preservation_multiplier: number;
   diff_output_preservation_class: string;
+  // several subjects, e.g. "j@cid=a man, l3xi=a woman"
+  diff_output_preservation_triggers?: string;
+  diff_output_preservation_every?: number;
   blank_prompt_preservation?: boolean;
   blank_prompt_preservation_multiplier?: number;
   switch_boundary_every: number;
@@ -244,6 +249,8 @@ export interface SampleConfig {
   sampler: string;
   sample_every: number;
   sample_start_step: number;
+  sample_schedule?: number[];
+  sample_on_save?: boolean;
   width: number;
   height: number;
   prompts?: string[];

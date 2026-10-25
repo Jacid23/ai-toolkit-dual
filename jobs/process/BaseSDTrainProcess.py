@@ -160,6 +160,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
             for raw_dataset in raw_datasets:
                 raw_dataset['diff_output_preservation'] = True
                 raw_dataset['diff_output_preservation_class'] = self.train_config.diff_output_preservation_class
+                raw_dataset['diff_output_preservation_triggers'] = self.train_config.diff_output_preservation_triggers
         
         if raw_datasets is not None and len(raw_datasets) > 0:
             for raw_dataset in raw_datasets:
@@ -2606,11 +2607,22 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 # if is even step and we have a reg dataset, use that
                 # todo improve this logic to send one of each through if we can buckets and batch size might be an issue
                 is_reg_step = False
-                is_save_step = self.save_config.save_every and self.step_num % self.save_config.save_every == 0
-                is_sample_step = (
-                    self.sample_config.sample_every
-                    and self.step_num >= self.sample_config.sample_start_step
-                    and self.step_num % self.sample_config.sample_every == 0
+                # save: explicit schedule overrides; else every-N gated by save_start_step
+                if self.save_config.save_schedule:
+                    is_save_step = self.step_num in self.save_config.save_schedule
+                else:
+                    is_save_step = (
+                        self.save_config.save_every
+                        and self.step_num >= self.save_config.save_start_step
+                        and self.step_num % self.save_config.save_every == 0
+                    )
+                # sample: a checkpoint ALWAYS gets a sample (a save with no sample is
+                # useless), so samples follow saves automatically — ONE schedule drives
+                # both. An explicit sample_schedule adds EXTRA samples on top (e.g. early
+                # peeks before the first save).
+                is_sample_step = is_save_step or (
+                    bool(self.sample_config.sample_schedule)
+                    and self.step_num in self.sample_config.sample_schedule
                 )
                 if self.train_config.disable_sampling:
                     is_sample_step = False

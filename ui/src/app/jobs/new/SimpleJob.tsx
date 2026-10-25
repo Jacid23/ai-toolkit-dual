@@ -919,12 +919,32 @@ export default function SimpleJob({
                         />
                         <TextInput
                           label="DOP Preservation Class"
-                          className="pt-2 pb-4"
+                          className="pt-2"
                           value={jobConfig.config.process[0].train.diff_output_preservation_class as string}
                           onChange={value =>
                             setJobConfig(value, 'config.process[0].train.diff_output_preservation_class')
                           }
                           placeholder="eg. woman"
+                        />
+                        <TextInput
+                          label="DOP Subjects (several people)"
+                          docKey={'train.diff_output_preservation_triggers'}
+                          className="pt-2"
+                          value={(jobConfig.config.process[0].train.diff_output_preservation_triggers as string) || ''}
+                          onChange={value =>
+                            setJobConfig(value, 'config.process[0].train.diff_output_preservation_triggers')
+                          }
+                          placeholder="eg. j@cid=a man, l3xi=a woman"
+                        />
+                        <NumberInput
+                          label="DOP Every N Steps"
+                          className="pt-2 pb-4"
+                          value={(jobConfig.config.process[0].train.diff_output_preservation_every as number) || 1}
+                          onChange={value =>
+                            setJobConfig(value, 'config.process[0].train.diff_output_preservation_every')
+                          }
+                          placeholder="eg. 1"
+                          min={1}
                         />
                       </>
                     )}

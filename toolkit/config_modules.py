@@ -7,6 +7,7 @@ import torch
 import torchaudio
 
 from toolkit.audio.album_artwork import add_album_artwork
+from toolkit.dop_triggers import parse_dop_triggers
 from toolkit.prompt_utils import PromptEmbeds
 from torchao.quantization.quant_primitives import _DTYPE_TO_BIT_WIDTH
 
@@ -23,6 +24,15 @@ else:
 class SaveConfig:
     def __init__(self, **kwargs):
         self.save_every: int = kwargs.get('save_every', 1000)
+        # don't start saving checkpoints until this step (mirrors sample_start_step)
+        self.save_start_step: int = kwargs.get('save_start_step', 0)
+        # explicit list of steps to save at; if non-empty it OVERRIDES
+        # save_every/save_start_step (lets you set a custom rhythm, e.g.
+        # [2000, 2100, 2200, ...]). Accepts a list or a comma-separated string.
+        _save_sched = kwargs.get('save_schedule', None)
+        if isinstance(_save_sched, str):
+            _save_sched = [int(s.strip()) for s in _save_sched.split(',') if s.strip()]
+        self.save_schedule = set(int(s) for s in (_save_sched or []))
         self.dtype: str = kwargs.get('dtype', 'float16')
         self.max_step_saves_to_keep: int = kwargs.get('max_step_saves_to_keep', 5)
         self.save_format: SaveFormat = kwargs.get('save_format', 'safetensors')
@@ -84,6 +94,13 @@ class SampleConfig:
         self.sampler: str = kwargs.get('sampler', 'ddpm')
         self.sample_every: int = kwargs.get('sample_every', 100)
         self.sample_start_step: int = kwargs.get('sample_start_step', 0)
+        # explicit list of steps to sample at; if non-empty it OVERRIDES
+        # sample_every/sample_start_step (custom rhythm, e.g. [500, 1000, 1500,
+        # 1750, 2000, 2100, ...]). Accepts a list or a comma-separated string.
+        _sample_sched = kwargs.get('sample_schedule', None)
+        if isinstance(_sample_sched, str):
+            _sample_sched = [int(s.strip()) for s in _sample_sched.split(',') if s.strip()]
+        self.sample_schedule = set(int(s) for s in (_sample_sched or []))
         self.width: int = kwargs.get('width', 512)
         self.height: int = kwargs.get('height', 512)
         # the UI may omit the global negative prompt (it can be set per sample);
@@ -497,7 +514,14 @@ class TrainConfig:
         self.diff_output_preservation_multiplier = kwargs.get('diff_output_preservation_multiplier', 1.0)
         # If the trigger word is in the prompt, we will use this class name to replace it eg. "sks woman" -> "woman"
         self.diff_output_preservation_class = kwargs.get('diff_output_preservation_class', '')
-        
+        # several subjects in one LoRA: every trigger in a caption is swapped for its own class,
+        # e.g. "j@cid=a man, l3xi=a woman". Overrides the single trigger / class swap when set
+        self.diff_output_preservation_triggers = parse_dop_triggers(
+            kwargs.get('diff_output_preservation_triggers', None)
+        )
+        # run the preservation pass every N steps (raise the multiplier to keep the same average pull)
+        self.diff_output_preservation_every = max(1, int(kwargs.get('diff_output_preservation_every', 1) or 1))
+
         # blank prompt preservation will preserve the model's knowledge of a blank prompt
         self.blank_prompt_preservation = kwargs.get('blank_prompt_preservation', False)
         self.blank_prompt_preservation_multiplier = kwargs.get('blank_prompt_preservation_multiplier', 1.0)
@@ -946,6 +970,10 @@ class DatasetConfig:
         # the dataset trigger word is replaced with the class in the caption for DOP embeddings
         self.diff_output_preservation: bool = kwargs.get('diff_output_preservation', False)
         self.diff_output_preservation_class: str = kwargs.get('diff_output_preservation_class', '')
+        # set from the train config: [(trigger, class), ...] swapped together in the DOP caption
+        self.diff_output_preservation_triggers = parse_dop_triggers(
+            kwargs.get('diff_output_preservation_triggers', None)
+        )
         random_triggers = kwargs.get('random_triggers', [])
         # if they are a string, load them from a file
         if isinstance(random_triggers, str) and os.path.exists(random_triggers):

@@ -20,6 +20,7 @@ from transformers import CLIPImageProcessor, CLIPVisionModelWithProjection, Sigl
 
 from toolkit.audio.preserve_pitch import time_stretch_preserve_pitch
 from toolkit.basic import UnusableFileError, flush, value_map
+from toolkit.dop_triggers import swap_dop_triggers
 from toolkit.buckets import get_bucket_for_image_size, get_resolution
 from toolkit.config_modules import ControlTypes
 from toolkit.control_generator import ControlGenerator
@@ -377,7 +378,12 @@ class CaptionProcessingDTOMixin:
             # replace this dataset's trigger word with the preservation class.
             # do it on the final caption so token order matches the normal caption
             self.caption_dop = self.caption
-            if self.trigger_word is not None:
+            if self.dataset_config.diff_output_preservation_triggers:
+                # several subjects: every trigger in the caption gets its own class
+                self.caption_dop = swap_dop_triggers(
+                    self.caption, self.dataset_config.diff_output_preservation_triggers
+                )
+            elif self.trigger_word is not None:
                 self.caption_dop = self.caption.replace(
                     self.trigger_word, self.dataset_config.diff_output_preservation_class
                 )
@@ -2314,6 +2320,8 @@ class TextEmbeddingFileItemDTOMixin:
         # live encoding replaces the trigger word with the preservation class on the
         # dropped caption (class only), so the cached DOP dropout caption must match
         dropout_caption = self.get_dropout_caption()
+        if self.dataset_config.diff_output_preservation_triggers:
+            return swap_dop_triggers(dropout_caption, self.dataset_config.diff_output_preservation_triggers)
         if self.trigger_word is not None:
             return dropout_caption.replace(
                 self.trigger_word, self.dataset_config.diff_output_preservation_class
