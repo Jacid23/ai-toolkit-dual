@@ -626,7 +626,12 @@ class Automagic3(torch.optim.Optimizer):
                 for p in group["params"]
                 if p in self.state and "lr" in self.state[p]
             ]
-            out.append(float(torch.stack(lrs).mean()) if lrs else float(group["lr"]))
+            # params can sit on different GPUs (split model): gather on one
+            out.append(
+                float(torch.stack([t.to(lrs[0].device) for t in lrs]).mean())
+                if lrs
+                else float(group["lr"])
+            )
         return out
 
     def get_avg_learning_rate(self) -> float:
