@@ -160,6 +160,11 @@ export const captionerTypes: CaptionOption[] = [
 
         },
         name_or_path_options: [
+            // local copy, so picking it never downloads
+            {
+                value: 'S:\\ComfyUI\\models\\text_encoders\\qwen\\Huihui-Qwen3-VL-8B-Instruct-abliterated',
+                label: 'Huihui-Qwen3-VL-8B-Instruct-abliterated (local, S:)',
+            },
             { value: 'Qwen/Qwen3-VL-2B-Instruct', label: 'Qwen/Qwen3-VL-2B-Instruct' },
             { value: 'Qwen/Qwen3-VL-4B-Instruct', label: 'Qwen/Qwen3-VL-4B-Instruct' },
             { value: 'Qwen/Qwen3-VL-8B-Instruct', label: 'Qwen/Qwen3-VL-8B-Instruct' },

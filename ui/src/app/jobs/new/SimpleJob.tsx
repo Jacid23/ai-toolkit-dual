@@ -26,6 +26,7 @@ import { X, Copy, Wand2, SquareDashed, Info } from 'lucide-react';
 import { openDoc } from '@/components/DocModal';
 import { openUpsamplePromptsModal, toAspectRatio } from '@/components/UpsamplePromptsModal';
 import { openPromptBoxEditor } from '@/components/PromptBoxEditorModal';
+import { openPromptLibrary } from '@/components/PromptLibraryModal';
 import AddSingleImageModal, { openAddImageModal } from '@/components/AddSingleImageModal';
 import SampleControlImage from '@/components/SampleControlImage';
 import { FlipHorizontal2, FlipVertical2 } from 'lucide-react';
@@ -2000,18 +2001,37 @@ export default function SimpleJob({
                 </div>
               </div>
             ))}
-            <button
-              type="button"
-              onClick={() =>
-                setJobConfig(
-                  [...jobConfig.config.process[0].sample.samples, { prompt: '' }],
-                  'config.process[0].sample.samples',
-                )
-              }
-              className="w-full px-4 py-2 bg-gray-700 hover:bg-gray-600 rounded-lg transition-colors"
-            >
-              Add Prompt
-            </button>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() =>
+                  setJobConfig(
+                    [...jobConfig.config.process[0].sample.samples, { prompt: '' }],
+                    'config.process[0].sample.samples',
+                  )
+                }
+                className="flex-1 px-4 py-2 bg-gray-700 hover:bg-gray-600 rounded-lg transition-colors"
+              >
+                Add Prompt
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const samples = jobConfig.config.process[0].sample.samples;
+                  openPromptLibrary(
+                    texts =>
+                      setJobConfig(
+                        [...samples.filter(s => (s.prompt || '').trim() !== ''), ...texts.map(prompt => ({ prompt }))],
+                        'config.process[0].sample.samples',
+                      ),
+                    samples.map(s => s.prompt || ''),
+                  );
+                }}
+                className="px-4 py-2 bg-gray-700 hover:bg-gray-600 rounded-lg transition-colors"
+              >
+                ★ Insert from library
+              </button>
+            </div>
           </Card>
         </div>
 

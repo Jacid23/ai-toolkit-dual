@@ -38,7 +38,7 @@ export async function GET() {
 export async function POST(request: Request) {
   try {
     const body = await request.json();
-    const { HF_TOKEN, TRAINING_FOLDER, DATASETS_FOLDER, MODELS_PATH, TEXT_ENCODERS_FOLDER, DEFAULT_MODEL_ARCH } = body;
+    const { HF_TOKEN, TRAINING_FOLDER, DATASETS_FOLDER, MODELS_PATH, TEXT_ENCODERS_FOLDER, DEFAULT_MODEL_ARCH, COMFY_URL } = body;
 
     // Upsert both settings
     await Promise.all([
@@ -71,6 +71,12 @@ export async function POST(request: Request) {
         where: { key: 'DEFAULT_MODEL_ARCH' },
         update: { value: DEFAULT_MODEL_ARCH ?? '' },
         create: { key: 'DEFAULT_MODEL_ARCH', value: DEFAULT_MODEL_ARCH ?? '' },
+      }),
+      // dual build: ComfyUI the Compare page samples through (blank = http://127.0.0.1:8188)
+      prisma.settings.upsert({
+        where: { key: 'COMFY_URL' },
+        update: { value: COMFY_URL ?? '' },
+        create: { key: 'COMFY_URL', value: COMFY_URL ?? '' },
       }),
     ]);
 

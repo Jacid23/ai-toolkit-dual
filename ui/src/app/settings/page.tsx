@@ -153,6 +153,25 @@ export default function Settings() {
                 </div>
 
                 <div>
+                  <label htmlFor="COMFY_URL" className="block text-sm font-medium mb-2">
+                    ComfyUI Address
+                    <div className="text-gray-500 text-sm ml-1">
+                      The running ComfyUI the Compare page sends its samples to. If blank, it will default to
+                      http://127.0.0.1:8188.
+                    </div>
+                  </label>
+                  <input
+                    type="text"
+                    id="COMFY_URL"
+                    name="COMFY_URL"
+                    value={settings.COMFY_URL}
+                    onChange={handleChange}
+                    className="w-full px-4 py-2 bg-gray-800 border border-gray-700 rounded-lg focus:ring-2 focus:ring-gray-600 focus:border-transparent"
+                    placeholder="http://127.0.0.1:8188"
+                  />
+                </div>
+
+                <div>
                   <SelectInput
                     label="Default Model for New Jobs"
                     value={settings.DEFAULT_MODEL_ARCH}

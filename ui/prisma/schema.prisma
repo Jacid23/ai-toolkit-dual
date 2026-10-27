@@ -49,3 +49,39 @@ model Job {
   @@index([job_ref])
 
 }
+
+// Compare page: one saved comparison (trainings, prompts, Comfy sample settings as JSON)
+model Comparison {
+  id         String   @id @default(uuid())
+  name       String
+  data       String // JSON string
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+}
+
+// One generated (or queued) Compare image: a LoRA file x prompt text
+model CompareCell {
+  id            String   @id @default(uuid())
+  comparison_id String
+  lora_path     String
+  prompt        String
+  status        String   @default("pending") // 'pending', 'done', 'error'
+  comfy_id      String?
+  image_path    String?
+  error         String?
+  settings      String   @default("{}") // JSON snapshot of what it was generated with
+  created_at    DateTime @default(now())
+  updated_at    DateTime @updatedAt
+
+  @@unique([comparison_id, lora_path, prompt])
+  @@index([comparison_id])
+  @@index([status])
+}
+
+// Saved test prompts, shared by the Compare page and New Job sample prompts
+model SavedPrompt {
+  id         String   @id @default(uuid())
+  name       String
+  text       String
+  created_at DateTime @default(now())
+}

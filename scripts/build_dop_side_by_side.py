@@ -24,6 +24,7 @@ import argparse
 import json
 import os
 import random
+import re
 import sys
 
 import cv2
@@ -43,8 +44,23 @@ DEFAULT_STRANGERS = os.path.join(TOOLKIT_ROOT, "models", "dop_strangers")
 DEFAULT_YUNET = os.path.join(TOOLKIT_ROOT, "models", "face", "face_detection_yunet_2023mar.onnx")
 
 
+def subject_sex(folder, caption_ext):
+    """"man" or "woman" from the words the subject's captions use most, or None."""
+    counts = {"man": 0, "woman": 0}
+    for n in os.listdir(folder):
+        if not n.endswith(caption_ext) or n.startswith(PREFIX):
+            continue
+        with open(os.path.join(folder, n), encoding="utf-8", errors="replace") as f:
+            text = f.read().lower()
+        counts["man"] += len(re.findall(r"\b(?:male|man|guy|boy|he|his|him)\b", text))
+        counts["woman"] += len(re.findall(r"\b(?:female|woman|lady|girl|she|her|hers)\b", text))
+    if counts["man"] == counts["woman"]:
+        return None
+    return max(counts, key=counts.get)
+
+
 def get_strangers(folder):
-    """[(path, description), ...]: the local copy when complete, else downloaded (about 21 MB)."""
+    """[(path, description, sex), ...]: the local copy when complete, else downloaded (about 21 MB)."""
     index = os.path.join(folder, "strangers.json")
     if not os.path.isfile(index):
         from huggingface_hub import snapshot_download
@@ -52,8 +68,8 @@ def get_strangers(folder):
         snapshot_download(REPO, repo_type="dataset", revision=REVISION, local_dir=folder)
     with open(index, encoding="utf-8") as f:
         rows = json.load(f)
-    people = [(os.path.join(folder, r["file"]), r["description"]) for r in rows]
-    missing = [p for p, _d in people if not os.path.isfile(p)]
+    people = [(os.path.join(folder, r["file"]), r["description"], r.get("sex")) for r in rows]
+    missing = [p for p, _d, _s in people if not os.path.isfile(p)]
     if missing:
         raise RuntimeError(f"{len(missing)} stranger image(s) missing in {folder}, delete it and run again")
     return people
@@ -164,8 +180,9 @@ def pick_photos(folder, rng, faces, exclude=()):
     return [picks[k % len(picks)] for k in range(PER_SUBJECT)]
 
 
-def build(subjects, out, strangers_dir, seed, caption_ext, exclude=(), yunet_model=DEFAULT_YUNET):
-    people = get_strangers(strangers_dir)
+def build(subjects, out, strangers_dir, seed, caption_ext, exclude=(), yunet_model=DEFAULT_YUNET, same_sex=False,
+          sexes=None):
+    everyone = get_strangers(strangers_dir)
     faces = FaceFinder(yunet_model)
     os.makedirs(out, exist_ok=True)
     for n in os.listdir(out):
@@ -174,13 +191,21 @@ def build(subjects, out, strangers_dir, seed, caption_ext, exclude=(), yunet_mod
     sources = {}
     for index, (folder, name) in enumerate(subjects):
         print(f"{name}: {folder}")
+        people = everyone
+        if same_sex:
+            # a stranger of the subject's own sex is the hard case: that is who a face bleeds onto
+            sex = (sexes or {}).get(name) or subject_sex(folder, caption_ext)
+            if sex is None:
+                raise ValueError(f"{name}: can't tell man or woman from its captions, pass --sex {name}=woman (or man)")
+            people = [p for p in everyone if p[2] == sex]
+            print(f"  strangers: {len(people)} {sex}")
         rng = random.Random(seed * 1000 + index)
         order = list(range(len(people)))
         rng.shuffle(order)
         picks = pick_photos(folder, rng, faces, exclude)
         tag = "".join(c if c.isalnum() else "_" for c in name)
         for k in range(PER_SUBJECT):
-            stranger_path, description = people[order[k % len(order)]]
+            stranger_path, description, _sex = people[order[k % len(order)]]
             path, face = picks[k]
             subject_left = rng.random() < 0.5
             mine = portrait_square(load(path), face)
@@ -211,8 +236,14 @@ def main():
     parser.add_argument("--exclude", action="append", default=[], metavar="FILE",
                         help="a training photo's file name to leave out (a tattoo or a print read as a face); repeatable")
     parser.add_argument("--face_model", default=DEFAULT_YUNET, help="OpenCV YuNet face model (.onnx)")
+    parser.add_argument("--same_sex", action="store_true",
+                        help="pair each subject only with strangers of its own sex (read from its captions)")
+    parser.add_argument("--sex", action="append", default=[], metavar="NAME=man|woman",
+                        help="a subject's sex for --same_sex when its captions don't say; repeatable")
     args = parser.parse_args()
-    build(args.subject, args.out, args.strangers, args.seed, args.caption_ext, set(args.exclude), args.face_model)
+    sexes = dict(s.split("=", 1) for s in args.sex)
+    build(args.subject, args.out, args.strangers, args.seed, args.caption_ext, set(args.exclude), args.face_model,
+          args.same_sex, sexes)
 
 
 if __name__ == "__main__":

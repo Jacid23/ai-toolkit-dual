@@ -12,12 +12,14 @@ import { TopBar, MainContent } from '@/components/layout';
 import UniversalTable, { TableColumn } from '@/components/UniversalTable';
 import { apiClient } from '@/utils/api';
 import { useRouter } from 'next/navigation';
+import SideBySideModal from '@/components/SideBySideModal';
 
 export default function Datasets() {
   const router = useRouter();
   const { datasets, status, refreshDatasets } = useDatasetList();
   const [newDatasetName, setNewDatasetName] = useState('');
   const [isNewDatasetModalOpen, setIsNewDatasetModalOpen] = useState(false);
+  const [isSideBySideOpen, setIsSideBySideOpen] = useState(false);
 
   // Transform datasets array into rows with objects
   const tableRows = datasets.map(dataset => ({
@@ -117,7 +119,14 @@ export default function Datasets() {
           <h1 className="text-base sm:text-lg">Datasets</h1>
         </div>
         <div className="flex-1"></div>
-        <div>
+        <div className="flex items-center gap-2">
+          <Button
+            className="text-white bg-slate-600 px-2 sm:px-3 py-1 rounded-md hover:bg-slate-500 transition-colors text-sm sm:text-base whitespace-nowrap"
+            onClick={() => setIsSideBySideOpen(true)}
+          >
+            <span className="sm:hidden">Side-by-Side</span>
+            <span className="hidden sm:inline">Build Side-by-Side</span>
+          </Button>
           <Button
             className="text-white bg-slate-600 px-2 sm:px-3 py-1 rounded-md hover:bg-slate-500 transition-colors text-sm sm:text-base whitespace-nowrap"
             onClick={() => openNewDatasetModal()}
@@ -170,6 +179,13 @@ export default function Datasets() {
           </form>
         </div>
       </Modal>
+
+      <SideBySideModal
+        isOpen={isSideBySideOpen}
+        onClose={() => setIsSideBySideOpen(false)}
+        datasets={datasets}
+        onBuilt={refreshDatasets}
+      />
     </>
   );
 }

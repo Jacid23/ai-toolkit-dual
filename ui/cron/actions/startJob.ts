@@ -154,13 +154,15 @@ const watchDetachedJob = (pid: number, jobID: string, logPath: string) => {
     // way. Only a job that vanished while still marked 'running' died without
     // getting to say anything; record that. There is no exit code to read off
     // a process that is not our child, so report the last thing it logged.
+    // Match the pid too: when the job was restarted, this watcher belongs to
+    // the old process, and its death says nothing about the new run.
     const tail = readLogTail(logPath);
     const message = tail
       ? `Job process exited unexpectedly. Last log line: ${tail}`
       : 'Job process exited unexpectedly.';
     void prisma.job
       .updateMany({
-        where: { id: jobID, status: 'running' },
+        where: { id: jobID, status: 'running', pid },
         data: { status: 'error', info: message, pid: null },
       })
       .then(result => {
@@ -350,7 +352,8 @@ const startAndWatchJob = (job: Job) => {
           appendJobLog(logPath, `\n${message}\n`);
           void prisma.job
             .updateMany({
-              where: { id: jobID, status: 'running' },
+              // pid: a restarted job's new run is not this process (see watchDetachedJob)
+              where: { id: jobID, status: 'running', pid },
               data: { status: 'error', info: message, pid: null },
             })
             .catch(updateError => {
