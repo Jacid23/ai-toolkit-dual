@@ -402,17 +402,29 @@ class Krea2Model(QwenImageVAEHolderMixin, BaseModel):
             else QWEN_IMAGE_VAE_PATH
         )
         vae_path = self.model_config.model_kwargs.get("vae_path", default_vae)
-        # DUAL BUILD: if the requested folder's vae/ has no real weights (only a
-        # config + preview images, as some model downloads leave behind), fall
-        # back to the known-good local Qwen-Image VAE instead of crashing.
-        if not _vae_dir_has_weights(vae_path) and _vae_dir_has_weights(QWEN_IMAGE_VAE_PATH):
+        # DUAL BUILD: a single-file VAE (.safetensors, e.g. the community Wan2.1
+        # VAE) is valid — load_model loads single files and takes the architecture
+        # config from the known-good Qwen-Image VAE (same wan-style arch). Only a
+        # dir whose vae/ has no real weights (config + previews only) or a missing
+        # path falls back to the bundled VAE instead of crashing.
+        is_single_file = (
+            isinstance(vae_path, str)
+            and vae_path.endswith(".safetensors")
+            and os.path.isfile(vae_path)
+        )
+        config_path = QWEN_IMAGE_VAE_PATH if is_single_file else None
+        if (
+            not is_single_file
+            and not _vae_dir_has_weights(vae_path)
+            and _vae_dir_has_weights(QWEN_IMAGE_VAE_PATH)
+        ):
             self.print_and_status_update(
                 f"  - no VAE weights at '{vae_path}'; falling back to '{QWEN_IMAGE_VAE_PATH}'"
             )
             vae_path = QWEN_IMAGE_VAE_PATH
         self.print_and_status_update(f"Loading Qwen-Image VAE from {vae_path}")
         vae = QwenImageVAE.load_model(
-            vae_path, dtype=self.vae_torch_dtype, token=HF_TOKEN
+            vae_path, dtype=self.vae_torch_dtype, token=HF_TOKEN, config_path=config_path
         )
         vae.eval()
         vae.requires_grad_(False)
