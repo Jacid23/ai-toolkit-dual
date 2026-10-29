@@ -1,5 +1,5 @@
 'use client';
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import {
   ModelArch,
   quantizationOptions,
@@ -66,6 +66,86 @@ export default function SimpleJob({
   isLoading,
 }: Props) {
   const { archs: modelArchs, groupedModelOptions } = useModelArchs();
+
+  // --- Save/sample schedule + epoch calculator -----------------------------
+  // One field drives save_schedule; a sample auto-follows every save (handled in
+  // the trainer). The epoch calculator pre-fills meaningful step numbers.
+  const initialSchedule: number[] = jobConfig.config.process[0].save.save_schedule || [];
+  const [scheduleText, setScheduleText] = useState<string>(initialSchedule.join(', '));
+  const [epochInfo, setEpochInfo] = useState<{ steps_per_epoch: number; total_images: number; epochs: number[] } | null>(
+    null,
+  );
+  const [epochLoading, setEpochLoading] = useState(false);
+  const [epochError, setEpochError] = useState<string | null>(null);
+
+  const parseSteps = (text: string): number[] => {
+    const set = new Set<number>();
+    for (const tok of text.split(/[\s,]+/)) {
+      const n = parseInt(tok, 10);
+      if (!isNaN(n) && n > 0) set.add(n);
+    }
+    return Array.from(set).sort((a, b) => a - b);
+  };
+
+  const commitSchedule = (text: string) => {
+    setScheduleText(text);
+    setJobConfig(parseSteps(text), 'config.process[0].save.save_schedule');
+  };
+
+  const addScheduleStep = (step: number) => {
+    const next = parseSteps(scheduleText);
+    if (!next.includes(step)) next.push(step);
+    next.sort((a, b) => a - b);
+    commitSchedule(next.join(', '));
+  };
+
+  const removeScheduleStep = (step: number) => {
+    commitSchedule(
+      parseSteps(scheduleText)
+        .filter(s => s !== step)
+        .join(', '),
+    );
+  };
+
+  const calcEpochs = async () => {
+    setEpochLoading(true);
+    setEpochError(null);
+    try {
+      const p = jobConfig.config.process[0];
+      const datasets = (p.datasets || []).map((d: any) => ({
+        folder_path: d.folder_path,
+        num_repeats: d.num_repeats || 1,
+        num_resolutions: Array.isArray(d.resolution) ? d.resolution.length : 1,
+      }));
+      const res = await fetch('/api/datasets/epochs', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          datasets,
+          batch_size: p.train.batch_size,
+          gradient_accumulation: p.train.gradient_accumulation,
+          total_steps: p.train.steps,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error || 'Failed to calculate');
+      if (!data.total_images) {
+        setEpochError('No images found — set your dataset folder first.');
+        setEpochInfo(null);
+      } else {
+        setEpochInfo({
+          steps_per_epoch: data.steps_per_epoch,
+          total_images: data.total_images,
+          epochs: data.epochs || [],
+        });
+      }
+    } catch (e: any) {
+      setEpochError(e?.message || 'Failed to calculate');
+      setEpochInfo(null);
+    } finally {
+      setEpochLoading(false);
+    }
+  };
   const modelArch = useMemo(() => {
     return modelArchs.find(a => a.name === jobConfig.config.process[0].model.arch) as ModelArch;
   }, [modelArchs, jobConfig.config.process[0].model.arch]);
@@ -705,6 +785,81 @@ export default function SimpleJob({
               placeholder="eg. 250"
               min={1}
               required
+            />
+            <div className="pt-2">
+              <TextInput
+                label="Save / Sample at steps (optional)"
+                value={scheduleText}
+                onChange={(value: string) => commitSchedule(value)}
+                placeholder="eg. 500, 1000, 1500, 1600"
+              />
+              {parseSteps(scheduleText).length > 0 && (
+                <div className="flex flex-wrap gap-1 mt-1">
+                  {parseSteps(scheduleText).map(step => (
+                    <span
+                      key={step}
+                      className="inline-flex items-center gap-1 bg-gray-700 text-gray-100 rounded px-2 py-0.5 text-xs"
+                    >
+                      {step}
+                      <button
+                        type="button"
+                        onClick={() => removeScheduleStep(step)}
+                        className="text-gray-400 hover:text-white"
+                      >
+                        <X size={12} />
+                      </button>
+                    </span>
+                  ))}
+                </div>
+              )}
+              <p className="text-xs text-gray-500 mt-1">
+                Leave empty to use “Save Every”. When set, these exact steps are used, and a sample is taken at every
+                save.
+              </p>
+              <div className="mt-2">
+                <button
+                  type="button"
+                  onClick={calcEpochs}
+                  disabled={epochLoading}
+                  className="text-xs bg-gray-700 hover:bg-gray-600 text-gray-100 rounded px-2 py-1 disabled:opacity-50"
+                >
+                  {epochLoading ? 'Calculating…' : 'Calculate epochs'}
+                </button>
+                {epochError && <p className="text-xs text-red-400 mt-1">{epochError}</p>}
+                {epochInfo && (
+                  <div className="mt-1">
+                    <p className="text-xs text-gray-400">
+                      {epochInfo.total_images} images · 1 epoch ≈ {epochInfo.steps_per_epoch} steps · click to add
+                    </p>
+                    <div className="flex flex-wrap gap-1 mt-1">
+                      {epochInfo.epochs.map((step, i) => {
+                        const active = parseSteps(scheduleText).includes(step);
+                        return (
+                          <button
+                            key={step}
+                            type="button"
+                            title={`epoch ${i + 1}`}
+                            onClick={() => (active ? removeScheduleStep(step) : addScheduleStep(step))}
+                            className={`rounded px-2 py-0.5 text-xs ${
+                              active ? 'bg-green-700 text-white' : 'bg-gray-700 text-gray-200 hover:bg-gray-600'
+                            }`}
+                          >
+                            {step}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+            <NumberInput
+              label="Start Saving at Step (optional)"
+              className="pt-2"
+              value={jobConfig.config.process[0].save.save_start_step ?? 0}
+              onChange={value => setJobConfig(value, 'config.process[0].save.save_start_step')}
+              placeholder="0 = from start"
+              min={0}
             />
             <NumberInput
               label="Max Step Saves to Keep"
