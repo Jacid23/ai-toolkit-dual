@@ -176,6 +176,8 @@ export interface TrainConfig {
   cache_text_embeddings: boolean;
   optimizer_params: {
     weight_decay: number;
+    max_lr?: number; // Automagic family: hard LR ceiling (default 1e3 = effectively none)
+    step_target?: number; // Automagic v4: LR-aggressiveness target (default 0.1, range 0-2)
   };
   skip_first_sample: boolean;
   force_first_sample: boolean;

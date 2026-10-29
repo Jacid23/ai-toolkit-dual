@@ -941,6 +941,32 @@ export default function SimpleJob({
                   min={0}
                   required
                 />
+                {jobConfig.config.process[0].train.optimizer?.startsWith('automagic') && (
+                  <>
+                    <NumberInput
+                      label="Max LR (cap)"
+                      className="pt-2"
+                      value={jobConfig.config.process[0].train.optimizer_params.max_lr ?? null}
+                      onChange={value => setJobConfig(value, 'config.process[0].train.optimizer_params.max_lr')}
+                      placeholder="eg. 0.0005 — hard ceiling (default = none)"
+                      min={0}
+                    />
+                    <NumberInput
+                      label="Step Target (v4 LR aggressiveness)"
+                      className="pt-2"
+                      value={jobConfig.config.process[0].train.optimizer_params.step_target ?? null}
+                      onChange={value => setJobConfig(value, 'config.process[0].train.optimizer_params.step_target')}
+                      placeholder="default 0.1 — lower = gentler (0–2)"
+                      min={0}
+                      max={2}
+                    />
+                    <p className="text-xs text-gray-500 mt-1">
+                      Automagic self-tunes the LR. <strong>Max LR</strong> caps it (its default is effectively
+                      unbounded — set e.g. 0.0005 to prevent runaway). Lower <strong>Step Target</strong> makes v4 less
+                      aggressive.
+                    </p>
+                  </>
+                )}
               </div>
               {!isLlmModel && (
                 <div>
