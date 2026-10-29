@@ -422,6 +422,25 @@ export default function SimpleJob({
                 onChange={value => setJobConfig(value, 'config.process[0].model.model_kwargs.text_encoder_path')}
               />
             )}
+            {supportsTextEncoderSelect(jobConfig.config.process[0].model.arch) && (
+              <div className="pt-2">
+                <TextInput
+                  label="VAE Path (optional)"
+                  value={jobConfig.config.process[0].model.model_kwargs?.vae_path ?? ''}
+                  onChange={(value: string | undefined) =>
+                    setJobConfig(
+                      value?.trim() ? value : undefined,
+                      'config.process[0].model.model_kwargs.vae_path',
+                    )
+                  }
+                  placeholder="blank = VAE bundled with the model"
+                />
+                <p className="text-xs text-gray-500 mt-1">
+                  Point at a diffusers VAE folder (or a model folder with a <code>vae/</code>). A ComfyUI single-file
+                  VAE won’t load; an invalid path falls back to the bundled VAE.
+                </p>
+              </div>
+            )}
             {modelArch?.additionalSections?.includes('model.unconditional_lora_path') && (
               <TextInput
                 label="Unconditional Adapter Path"
@@ -853,22 +872,6 @@ export default function SimpleJob({
                 )}
               </div>
             </div>
-            <NumberInput
-              label="Start Saving at Step (optional)"
-              className="pt-2"
-              value={jobConfig.config.process[0].save.save_start_step ?? 0}
-              onChange={value => setJobConfig(value, 'config.process[0].save.save_start_step')}
-              placeholder="0 = from start"
-              min={0}
-            />
-            <NumberInput
-              label="Max Step Saves to Keep"
-              value={jobConfig.config.process[0].save.max_step_saves_to_keep}
-              onChange={value => setJobConfig(value, 'config.process[0].save.max_step_saves_to_keep')}
-              placeholder="eg. 4"
-              min={1}
-              required
-            />
           </Card>
         </div>
         <div>

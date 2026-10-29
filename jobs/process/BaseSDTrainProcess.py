@@ -492,7 +492,12 @@ class BaseSDTrainProcess(BaseTrainProcess):
             combined_items.sort(key=os.path.getctime)
             
             num_saves_to_keep = self.save_config.max_step_saves_to_keep
-            
+
+            # With an explicit save_schedule the user picked exactly which steps to
+            # save, so keep every one of them — never prune a scheduled checkpoint.
+            if getattr(self.save_config, 'save_schedule', None):
+                num_saves_to_keep = max(num_saves_to_keep, 10 ** 9)
+
             if hasattr(self.sd, 'max_step_saves_to_keep_multiplier'):
                 num_saves_to_keep *= self.sd.max_step_saves_to_keep_multiplier
 
