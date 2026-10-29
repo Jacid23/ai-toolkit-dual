@@ -79,6 +79,10 @@ class Automagic4(Automagic3):
         self.sensitivity_quantile = float(sensitivity_quantile)
         self.step_target = float(step_target)
         self._neutral_flip = 0.5 + math.asin(self.step_target / 2.0) / math.pi
+        # DUAL BUILD safety: v4's self-tuning LR inherits max_lr=1e3 (effectively
+        # uncapped) from Automagic3, which let the LR run away to ~5e-3 and diverge
+        # a real run. Default to a sane ceiling; override via optimizer_params.max_lr.
+        kwargs.setdefault('max_lr', 1e-3)
         super().__init__(params, *args, **kwargs)
 
     # ------------------------------------------------------------------ utils
