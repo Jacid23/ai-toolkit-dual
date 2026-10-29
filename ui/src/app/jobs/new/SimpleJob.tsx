@@ -1,5 +1,5 @@
 'use client';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   ModelArch,
   quantizationOptions,
@@ -106,6 +106,15 @@ export default function SimpleJob({
         .join(', '),
     );
   };
+
+  // Re-hydrate the schedule text when the config's save_schedule changes externally
+  // (e.g. leaving the screen and coming back, or a draft/job loading in). Typing keeps
+  // config and text in sync, so this never clobbers an in-progress edit.
+  useEffect(() => {
+    const fromCfg = ((jobConfig.config.process[0].save.save_schedule as number[]) || []).join(', ');
+    if (parseSteps(scheduleText).join(', ') !== fromCfg) setScheduleText(fromCfg);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [JSON.stringify(jobConfig.config.process[0].save.save_schedule)]);
 
   const calcEpochs = async () => {
     setEpochLoading(true);
@@ -909,7 +918,17 @@ export default function SimpleJob({
                 <SelectInput
                   label="Optimizer"
                   value={jobConfig.config.process[0].train.optimizer}
-                  onChange={value => setJobConfig(value, 'config.process[0].train.optimizer')}
+                  onChange={value => {
+                    setJobConfig(value, 'config.process[0].train.optimizer');
+                    // seed Automagic v4's safe defaults into the config so they show in the
+                    // yaml (and the fields below) instead of being an invisible code default
+                    if (value === 'automagic4') {
+                      const op = jobConfig.config.process[0].train.optimizer_params;
+                      if (op?.max_lr == null) setJobConfig(0.001, 'config.process[0].train.optimizer_params.max_lr');
+                      if (op?.step_target == null)
+                        setJobConfig(0.1, 'config.process[0].train.optimizer_params.step_target');
+                    }
+                  }}
                   options={[
                     { value: 'adafactor', label: 'Adafactor' },
                     { value: 'adam', label: 'Adam' },
@@ -948,22 +967,23 @@ export default function SimpleJob({
                       className="pt-2"
                       value={jobConfig.config.process[0].train.optimizer_params.max_lr ?? null}
                       onChange={value => setJobConfig(value, 'config.process[0].train.optimizer_params.max_lr')}
-                      placeholder="eg. 0.0005 — hard ceiling (default = none)"
+                      placeholder="eg. 0.0005 — hard ceiling"
                       min={0}
                     />
-                    <NumberInput
-                      label="Step Target (v4 LR aggressiveness)"
-                      className="pt-2"
-                      value={jobConfig.config.process[0].train.optimizer_params.step_target ?? null}
-                      onChange={value => setJobConfig(value, 'config.process[0].train.optimizer_params.step_target')}
-                      placeholder="default 0.1 — lower = gentler (0–2)"
-                      min={0}
-                      max={2}
-                    />
+                    {jobConfig.config.process[0].train.optimizer === 'automagic4' && (
+                      <NumberInput
+                        label="Step Target (v4 LR aggressiveness)"
+                        className="pt-2"
+                        value={jobConfig.config.process[0].train.optimizer_params.step_target ?? null}
+                        onChange={value => setJobConfig(value, 'config.process[0].train.optimizer_params.step_target')}
+                        placeholder="default 0.1 — lower = gentler (0–2)"
+                        min={0}
+                        max={2}
+                      />
+                    )}
                     <p className="text-xs text-gray-500 mt-1">
-                      Automagic self-tunes the LR. <strong>Max LR</strong> caps it (its default is effectively
-                      unbounded — set e.g. 0.0005 to prevent runaway). Lower <strong>Step Target</strong> makes v4 less
-                      aggressive.
+                      Automagic self-tunes the LR. <strong>Max LR</strong> caps it to prevent a runaway (v3's default is
+                      effectively unbounded; v4 defaults to 1e-3).
                     </p>
                   </>
                 )}
