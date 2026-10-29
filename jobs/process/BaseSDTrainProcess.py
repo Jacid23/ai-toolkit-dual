@@ -286,6 +286,70 @@ class BaseSDTrainProcess(BaseTrainProcess):
         # No-op for non-UI runs.
         pass
 
+    def apply_pending_updates(self):
+        # DUAL BUILD: "edit on the fly" — the UI writes a .pending_updates.json
+        # sidecar into save_root with a whitelist of light settings; at each save
+        # point we apply them to the live config and delete the file. Fully guarded:
+        # a bad file or attr can never raise into the training loop (that would kill
+        # the job), it is logged and skipped. Heavy settings (rank, optimizer, model,
+        # batch, resolution) are NOT hot-swappable and are never accepted here.
+        import json
+        path = os.path.join(self.save_root, '.pending_updates.json')
+        try:
+            if not os.path.exists(path):
+                return
+            with open(path, 'r', encoding='utf-8') as f:
+                updates = json.load(f) or {}
+            applied = []
+
+            def set_attr(obj, name, val):
+                if obj is not None and hasattr(obj, name):
+                    setattr(obj, name, val)
+                    applied.append(name)
+
+            def as_steps(v):
+                return set(int(s) for s in (v or []))
+
+            if 'sample_every' in updates:
+                set_attr(self.sample_config, 'sample_every', int(updates['sample_every']))
+            if 'sample_steps' in updates:
+                set_attr(self.sample_config, 'sample_steps', int(updates['sample_steps']))
+            if 'guidance_scale' in updates:
+                set_attr(self.sample_config, 'guidance_scale', float(updates['guidance_scale']))
+            if 'sample_schedule' in updates:
+                set_attr(self.sample_config, 'sample_schedule', as_steps(updates['sample_schedule']))
+            if 'save_every' in updates:
+                set_attr(self.save_config, 'save_every', int(updates['save_every']))
+            if 'save_start_step' in updates:
+                set_attr(self.save_config, 'save_start_step', int(updates['save_start_step']))
+            if 'max_step_saves_to_keep' in updates:
+                set_attr(self.save_config, 'max_step_saves_to_keep', int(updates['max_step_saves_to_keep']))
+            if 'save_schedule' in updates:
+                set_attr(self.save_config, 'save_schedule', as_steps(updates['save_schedule']))
+            if 'steps' in updates:
+                set_attr(self.train_config, 'steps', int(updates['steps']))
+            if 'lr' in updates:
+                opt = getattr(self, 'optimizer', None)
+                if opt is not None and hasattr(opt, 'param_groups'):
+                    for g in opt.param_groups:
+                        g['lr'] = float(updates['lr'])
+                    applied.append('lr')
+
+            try:
+                os.remove(path)
+            except Exception:
+                pass
+            if applied:
+                self.print_and_status_update(
+                    f"Applied queued change(s) at step {self.step_num}: {', '.join(applied)}"
+                )
+        except Exception as e:
+            try:
+                print_acc(f"apply_pending_updates error (ignored): {e}")
+                os.remove(path)
+            except Exception:
+                pass
+
     def cleanup_dataset_caches(self):
         # DUAL BUILD: on job end (complete / stop / error) wipe the per-dataset
         # on-disk caches this job wrote so they never linger or go stale between
@@ -2830,6 +2894,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
                     # cleanly HERE, now that the checkpoint save AND its samples have
                     # finished, so you can walk away and resume later.
                     if is_save_step:
+                        self.apply_pending_updates()
                         self.maybe_stop_at_checkpoint()
 
                     if self.logging_config.log_every and self.step_num % self.logging_config.log_every == 0:
