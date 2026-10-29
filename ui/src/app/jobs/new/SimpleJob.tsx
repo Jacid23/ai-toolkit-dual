@@ -212,14 +212,16 @@ export default function SimpleJob({
     if (modelArch?.additionalSections?.includes('model.multistage')) {
       count += 1; // add multistage card
     }
-    if (!disableSections.includes('model.quantize')) {
-      count += 1; // add quantization card
+    // Text Encoder / VAE card takes the 3rd-block slot (quantize now lives in the
+    // Target card), so it — not quantize — is what adds a top card here.
+    if (supportsTextEncoderSelect(jobConfig.config.process[0].model.arch)) {
+      count += 1; // add text encoder / vae card
     }
     if (!disableSections.includes('slider')) {
       count += 1; // add slider card
     }
     return count;
-  }, [modelArch, disableSections]);
+  }, [modelArch, disableSections, jobConfig.config.process[0].model.arch]);
 
   let topBarClass = 'grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 xl:grid-cols-4 gap-6';
 
@@ -416,31 +418,7 @@ export default function SimpleJob({
                 placeholder=""
               />
             )}
-            {supportsTextEncoderSelect(jobConfig.config.process[0].model.arch) && (
-              <TextEncoderSelect
-                value={jobConfig.config.process[0].model.model_kwargs?.text_encoder_path}
-                onChange={value => setJobConfig(value, 'config.process[0].model.model_kwargs.text_encoder_path')}
-              />
-            )}
-            {supportsTextEncoderSelect(jobConfig.config.process[0].model.arch) && (
-              <div className="pt-2">
-                <TextInput
-                  label="VAE Path (optional)"
-                  value={jobConfig.config.process[0].model.model_kwargs?.vae_path ?? ''}
-                  onChange={(value: string | undefined) =>
-                    setJobConfig(
-                      value?.trim() ? value : undefined,
-                      'config.process[0].model.model_kwargs.vae_path',
-                    )
-                  }
-                  placeholder="blank = VAE bundled with the model"
-                />
-                <p className="text-xs text-gray-500 mt-1">
-                  Point at a diffusers VAE folder (or a model folder with a <code>vae/</code>). A ComfyUI single-file
-                  VAE won’t load; an invalid path falls back to the bundled VAE.
-                </p>
-              </div>
-            )}
+            {/* Text Encoder + VAE moved to their own card (block 3) */}
             {modelArch?.additionalSections?.includes('model.unconditional_lora_path') && (
               <TextInput
                 label="Unconditional Adapter Path"
@@ -614,65 +592,28 @@ export default function SimpleJob({
               </>
             )}
           </Card>
-          {disableSections.includes('model.quantize') ? null : (
-            <Card title="Quantize / Compile">
-              <SelectInput
-                label="Transformer"
-                value={jobConfig.config.process[0].model.quantize ? jobConfig.config.process[0].model.qtype : ''}
-                onChange={value => {
-                  if (value === '') {
-                    setJobConfig(false, 'config.process[0].model.quantize');
-                    value = defaultQtype;
-                  } else {
-                    setJobConfig(true, 'config.process[0].model.quantize');
-                  }
-                  setJobConfig(value, 'config.process[0].model.qtype');
-                }}
-                options={transformerQuantizationOptions}
+          {supportsTextEncoderSelect(jobConfig.config.process[0].model.arch) ? (
+            <Card title="Text Encoder / VAE">
+              <TextEncoderSelect
+                value={jobConfig.config.process[0].model.model_kwargs?.text_encoder_path}
+                onChange={value => setJobConfig(value, 'config.process[0].model.model_kwargs.text_encoder_path')}
               />
-              {!disableSections.includes('model.quantize_te') && !isLlmModel && (
-                <SelectInput
-                  label="Text Encoder"
-                  value={
-                    jobConfig.config.process[0].model.quantize_te ? jobConfig.config.process[0].model.qtype_te : ''
+              <div className="pt-2">
+                <TextInput
+                  label="VAE Path (optional)"
+                  value={jobConfig.config.process[0].model.model_kwargs?.vae_path ?? ''}
+                  onChange={(value: string | undefined) =>
+                    setJobConfig(value?.trim() ? value : undefined, 'config.process[0].model.model_kwargs.vae_path')
                   }
-                  onChange={value => {
-                    if (value === '') {
-                      setJobConfig(false, 'config.process[0].model.quantize_te');
-                      value = defaultQtype;
-                    } else {
-                      setJobConfig(true, 'config.process[0].model.quantize_te');
-                    }
-                    setJobConfig(value, 'config.process[0].model.qtype_te');
-                  }}
-                  options={quantizationOptions}
+                  placeholder="blank = VAE bundled with the model"
                 />
-              )}
-              {!isLlmModel && (
-                <>
-                  <FormGroup label="Compile Options">
-                    <></>
-                  </FormGroup>
-                  <Checkbox
-                    label="Compile Model"
-                    checked={jobConfig.config.process[0].model.compile || false}
-                    onChange={value => {
-                      setJobConfig(value, 'config.process[0].model.compile');
-                      if (value) {
-                        for (const key in defaultCompileOptions) {
-                          setJobConfig((defaultCompileOptions as any)[key], `config.process[0].model.${key}`);
-                        }
-                      } else {
-                        for (const key in defaultCompileOptions) {
-                          setJobConfig(undefined, `config.process[0].model.${key}`);
-                        }
-                      }
-                    }}
-                  />
-                </>
-              )}
+                <p className="text-xs text-gray-500 mt-1">
+                  Point at a diffusers VAE folder (or a model folder with a <code>vae/</code>). A ComfyUI single-file
+                  VAE won’t load; an invalid path falls back to the bundled VAE.
+                </p>
+              </div>
             </Card>
-          )}
+          ) : null}
           {modelArch?.additionalSections?.includes('model.multistage') && (
             <Card title="Multistage">
               <FormGroup label="Stages to Train" docKey={'model.multistage'}>
@@ -750,6 +691,65 @@ export default function SimpleJob({
                     min={0}
                     max={1024}
                   />
+                )}
+              </>
+            )}
+            {disableSections.includes('model.quantize') ? null : (
+              <>
+                <SelectInput
+                  label="Transformer"
+                  value={jobConfig.config.process[0].model.quantize ? jobConfig.config.process[0].model.qtype : ''}
+                  onChange={value => {
+                    if (value === '') {
+                      setJobConfig(false, 'config.process[0].model.quantize');
+                      value = defaultQtype;
+                    } else {
+                      setJobConfig(true, 'config.process[0].model.quantize');
+                    }
+                    setJobConfig(value, 'config.process[0].model.qtype');
+                  }}
+                  options={transformerQuantizationOptions}
+                />
+                {!disableSections.includes('model.quantize_te') && !isLlmModel && (
+                  <SelectInput
+                    label="Text Encoder Quantize"
+                    value={
+                      jobConfig.config.process[0].model.quantize_te ? jobConfig.config.process[0].model.qtype_te : ''
+                    }
+                    onChange={value => {
+                      if (value === '') {
+                        setJobConfig(false, 'config.process[0].model.quantize_te');
+                        value = defaultQtype;
+                      } else {
+                        setJobConfig(true, 'config.process[0].model.quantize_te');
+                      }
+                      setJobConfig(value, 'config.process[0].model.qtype_te');
+                    }}
+                    options={quantizationOptions}
+                  />
+                )}
+                {!isLlmModel && (
+                  <>
+                    <FormGroup label="Compile Options">
+                      <></>
+                    </FormGroup>
+                    <Checkbox
+                      label="Compile Model"
+                      checked={jobConfig.config.process[0].model.compile || false}
+                      onChange={value => {
+                        setJobConfig(value, 'config.process[0].model.compile');
+                        if (value) {
+                          for (const key in defaultCompileOptions) {
+                            setJobConfig((defaultCompileOptions as any)[key], `config.process[0].model.${key}`);
+                          }
+                        } else {
+                          for (const key in defaultCompileOptions) {
+                            setJobConfig(undefined, `config.process[0].model.${key}`);
+                          }
+                        }
+                      }}
+                    />
+                  </>
                 )}
               </>
             )}
