@@ -145,3 +145,33 @@ export const getTotalSteps = (job: Job) => {
   const jobConfig = getJobConfig(job);
   return jobConfig.config.process[0].train?.steps || 0;
 };
+
+// The steps at which this job saves a checkpoint (a sample follows each). Uses the
+// explicit save_schedule when set, otherwise every-N gated by save_start_step.
+// Sorted, de-duped, clamped to totalSteps, and capped so a tiny save_every can't
+// generate thousands of entries for the queue-page ticks.
+export const getSavePoints = (job: Job, totalSteps?: number): number[] => {
+  const total = totalSteps ?? getTotalSteps(job);
+  let save: any;
+  try {
+    save = getJobConfig(job).config.process[0].save;
+  } catch {
+    return [];
+  }
+  if (!save) return [];
+  const set = new Set<number>();
+  if (Array.isArray(save.save_schedule) && save.save_schedule.length > 0) {
+    for (const s of save.save_schedule) {
+      const n = Number(s);
+      if (Number.isFinite(n) && n > 0 && (!total || n <= total)) set.add(n);
+    }
+  } else if (save.save_every && save.save_every > 0) {
+    const every = Number(save.save_every);
+    const start = Math.max(every, Number(save.save_start_step) || 0);
+    const limit = total || every * 500;
+    for (let s = Math.ceil(start / every) * every; s <= limit && set.size < 500; s += every) {
+      if (s > 0) set.add(s);
+    }
+  }
+  return Array.from(set).sort((a, b) => a - b);
+};

@@ -11,7 +11,7 @@ import { startQueue, stopQueue } from '@/utils/queue';
 import { CgSpinner } from 'react-icons/cg';
 import useGPUInfo from '@/hooks/useGPUInfo';
 import { openConfirm } from '@/components/ConfirmModal';
-import { deleteJob, getTotalSteps, stopJob } from '@/utils/jobs';
+import { deleteJob, getTotalSteps, getSavePoints, stopJob } from '@/utils/jobs';
 import { Trash2 } from 'lucide-react';
 
 interface JobsTableProps {
@@ -165,16 +165,29 @@ export default function JobsTable({ onlyActive = false, job_type = null }: JobsT
           return <></>;
         }
 
+        const savePoints = getSavePoints(row, totalSteps);
+        const pct = Math.min(100, (row.step / totalSteps) * 100);
         return (
           <div>
             <div className="text-xs text-gray-400">
               {row.step} / {totalSteps}
+              {savePoints.length > 0 && <span className="opacity-60"> · {savePoints.length} saves</span>}
             </div>
-            <div className="bg-gray-700 rounded-full h-1.5">
-              <div
-                className="bg-blue-500 h-1.5 rounded-full"
-                style={{ width: `${(row.step / totalSteps) * 100}%` }}
-              ></div>
+            <div className="relative bg-gray-700 rounded-full h-1.5">
+              <div className="bg-blue-500 h-1.5 rounded-full" style={{ width: `${pct}%` }}></div>
+              {savePoints.length <= 60 &&
+                savePoints.map(sp => {
+                  const left = Math.min(100, (sp / totalSteps) * 100);
+                  const passed = sp <= row.step;
+                  return (
+                    <div
+                      key={sp}
+                      title={`save @ ${sp}`}
+                      className={`absolute top-[-1.5px] w-px h-[9px] ${passed ? 'bg-green-400' : 'bg-amber-400/80'}`}
+                      style={{ left: `${left}%` }}
+                    ></div>
+                  );
+                })}
             </div>
           </div>
         );
