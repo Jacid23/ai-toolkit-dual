@@ -106,3 +106,11 @@ export const getTextEncodersFolder = async () => {
   if (row?.value && row.value.trim() !== '') return path.resolve(row.value.trim());
   return path.join(await getModelsPath(), 'text_encoders');
 };
+
+// VAES_FOLDER (dual build): where VAEs live for the job page's VAE dropdown.
+// Blank = <models folder>/vae.
+export const getVaesFolder = async () => {
+  const row = await prisma.settings.findFirst({ where: { key: 'VAES_FOLDER' } });
+  if (row?.value && row.value.trim() !== '') return path.resolve(row.value.trim());
+  return path.join(await getModelsPath(), 'vae');
+};

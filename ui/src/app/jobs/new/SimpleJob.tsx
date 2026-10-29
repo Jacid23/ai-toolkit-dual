@@ -35,6 +35,7 @@ import { IoFlaskSharp } from 'react-icons/io5';
 import { isMac } from '@/helpers/basic';
 import { gpuSelectOptions, isSplitSelection } from '@/utils/dualGpu';
 import TextEncoderSelect, { supportsTextEncoderSelect } from '@/components/TextEncoderSelect';
+import VaeSelect from '@/components/VaeSelect';
 
 type Props = {
   jobConfig: JobConfig;
@@ -608,17 +609,13 @@ export default function SimpleJob({
                 onChange={value => setJobConfig(value, 'config.process[0].model.model_kwargs.text_encoder_path')}
               />
               <div className="pt-2">
-                <TextInput
-                  label="VAE Path (optional)"
-                  value={jobConfig.config.process[0].model.model_kwargs?.vae_path ?? ''}
-                  onChange={(value: string | undefined) =>
-                    setJobConfig(value?.trim() ? value : undefined, 'config.process[0].model.model_kwargs.vae_path')
-                  }
-                  placeholder="blank = VAE bundled with the model"
+                <VaeSelect
+                  value={jobConfig.config.process[0].model.model_kwargs?.vae_path}
+                  onChange={value => setJobConfig(value, 'config.process[0].model.model_kwargs.vae_path')}
                 />
                 <p className="text-xs text-gray-500 mt-1">
-                  Point at a diffusers VAE folder (or a model folder with a <code>vae/</code>). A ComfyUI single-file
-                  VAE won’t load; an invalid path falls back to the bundled VAE.
+                  VAEs from your VAE folder (Settings → default <code>models\vae</code>). Drop a VAE in and refresh to
+                  see it; an incompatible VAE falls back to the bundled one.
                 </p>
               </div>
             </Card>
