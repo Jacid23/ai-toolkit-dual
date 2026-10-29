@@ -2,9 +2,14 @@
 
 Each subject gets PER_SUBJECT 2:1 pictures: one of its training photos beside a
 fixed stranger, the side picked at random. The caption describes the stranger
-first and the subject second ("a Black woman in her 40s on the left, and l3xi on
-the right, ..."), because the text encoders are causal: words after a trigger
-carry it, the stranger described before it stays clean. Train the output folder
+first and the subject second, because the text encoders are causal: words after a
+trigger carry it, the stranger described before it stays clean:
+
+  Two individual close-up portraits placed side by side.
+  The left portrait is of a Latino woman in her 40s.
+  The right portrait is of l3xi, a Caucasian woman in her 40s.
+
+Train the output folder
 as one more dataset next to the subjects, with Differential Output Preservation
 on and every subject's trigger in diff_output_preservation_triggers.
 
@@ -17,6 +22,8 @@ Usage:
   python scripts/build_dop_side_by_side.py ^
       --subject "D:/data/US/j@cid" "j@cid" ^
       --subject "D:/data/US/l3xi" "l3xi" ^
+      --describe "j@cid=a Caucasian man in his 40s" ^
+      --describe "l3xi=a Caucasian woman in her 40s" ^
       --out "D:/data/US/_side_by_side"
 """
 
@@ -36,7 +43,9 @@ REVISION = "8aeb77502234781cb5dca524994c80efcaa51024"  # pinned, so a rebuild gi
 PREFIX = "side_by_side_"
 PER_SUBJECT = 16
 PANEL = 512  # each half of a 1024 x 512 picture
-TAIL = "two people side by side, two close-up portraits"
+HEADER = "Two individual close-up portraits placed side by side."
+# the stranger set's wording -> the wording these captions use
+STRANGER_WORDS = {"a Black ": "an African American ", "a white ": "a Caucasian "}
 IMAGE_EXTS = (".png", ".jpg", ".jpeg", ".webp", ".bmp")
 TOOLKIT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DEFAULT_STRANGERS = os.path.join(TOOLKIT_ROOT, "models", "dop_strangers")
@@ -57,6 +66,22 @@ def subject_sex(folder, caption_ext):
     if counts["man"] == counts["woman"]:
         return None
     return max(counts, key=counts.get)
+
+
+def stranger_words(description):
+    for old, new in STRANGER_WORDS.items():
+        if description.startswith(old):
+            return new + description[len(old):]
+    return description
+
+
+def caption(stranger, stranger_side, name, name_side, description=None):
+    me = f"{name}, {description}" if description else name
+    return "\n".join([
+        HEADER,
+        f"The {stranger_side} portrait is of {stranger_words(stranger)}.",
+        f"The {name_side} portrait is of {me}.",
+    ])
 
 
 def get_strangers(folder):
@@ -181,7 +206,7 @@ def pick_photos(folder, rng, faces, exclude=()):
 
 
 def build(subjects, out, strangers_dir, seed, caption_ext, exclude=(), yunet_model=DEFAULT_YUNET, same_sex=False,
-          sexes=None):
+          sexes=None, descriptions=None):
     everyone = get_strangers(strangers_dir)
     faces = FaceFinder(yunet_model)
     os.makedirs(out, exist_ok=True)
@@ -217,7 +242,7 @@ def build(subjects, out, strangers_dir, seed, caption_ext, exclude=(), yunet_mod
             stem = os.path.join(out, f"{PREFIX}{tag}_{k:02d}")
             sheet.save(stem + ".png")
             with open(stem + caption_ext, "w", encoding="utf-8") as f:
-                f.write(f"{description} on the {them}, and {name} on the {me}, {TAIL}")
+                f.write(caption(description, them, name, me, (descriptions or {}).get(name)))
             sources[os.path.basename(stem)] = os.path.basename(path)
         print(f"  {PER_SUBJECT} pictures -> {out}")
     # which training photo each picture used, to --exclude a bad pick and rebuild
@@ -240,10 +265,14 @@ def main():
                         help="pair each subject only with strangers of its own sex (read from its captions)")
     parser.add_argument("--sex", action="append", default=[], metavar="NAME=man|woman",
                         help="a subject's sex for --same_sex when its captions don't say; repeatable")
+    parser.add_argument("--describe", action="append", default=[], metavar="NAME=TEXT",
+                        help="what follows the subject's name in its caption line, e.g. "
+                             "'l3xi=a Caucasian woman in her 40s'; repeatable")
     args = parser.parse_args()
     sexes = dict(s.split("=", 1) for s in args.sex)
+    descriptions = {k: v.strip() for k, v in (d.split("=", 1) for d in args.describe) if v.strip()}
     build(args.subject, args.out, args.strangers, args.seed, args.caption_ext, set(args.exclude), args.face_model,
-          args.same_sex, sexes)
+          args.same_sex, sexes, descriptions)
 
 
 if __name__ == "__main__":

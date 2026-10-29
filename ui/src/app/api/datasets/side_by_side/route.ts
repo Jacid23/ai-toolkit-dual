@@ -17,6 +17,7 @@ interface Subject {
   dataset: string;
   trigger: string;
   sex?: 'auto' | 'man' | 'woman';
+  description?: string;
 }
 
 // A top-level folder in the datasets root, or null. Names never carry separators or '..'.
@@ -65,6 +66,8 @@ export async function POST(request: Request) {
     }
     args.push('--subject', folder, trigger);
     if (s.sex === 'man' || s.sex === 'woman') args.push('--sex', `${trigger}=${s.sex}`);
+    const description = typeof s.description === 'string' ? s.description.trim() : '';
+    if (description) args.push('--describe', `${trigger}=${description}`);
   }
   args.push('--out', outFolder);
   if (body?.sameSex !== false) args.push('--same_sex');

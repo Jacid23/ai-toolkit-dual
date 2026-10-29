@@ -13,6 +13,7 @@ interface SubjectRow {
   dataset: string;
   trigger: string;
   sex: Sex;
+  description: string;
 }
 
 interface SideBySideModalProps {
@@ -35,7 +36,7 @@ const cleanName = (name: string) =>
     .replace(/[^a-z0-9]+/g, '_')
     .replace(/^_+|_+$/g, '');
 
-const emptyRow =(): SubjectRow => ({ dataset: '', trigger: '', sex: 'auto' });
+const emptyRow = (): SubjectRow => ({ dataset: '', trigger: '', sex: 'auto', description: '' });
 
 // Builds the "subject next to a stranger" dataset for multi-person DOP (scripts/build_dop_side_by_side.py).
 export default function SideBySideModal({ isOpen, onClose, datasets, onBuilt }: SideBySideModalProps) {
@@ -84,11 +85,13 @@ export default function SideBySideModal({ isOpen, onClose, datasets, onBuilt }: 
   };
 
   return (
-    <Modal isOpen={isOpen} onClose={() => !building && onClose()} title="Build Side-by-Side Dataset" size="lg">
+    <Modal isOpen={isOpen} onClose={() => !building && onClose()} title="Build Side-by-Side Dataset" size="xl">
       <div className="space-y-4 text-gray-200">
         <div className="text-sm text-gray-400">
           Puts each person's photos next to a stranger (16 pictures per person), captioned stranger first, trigger
-          second. Train the result as one more dataset with DOP on and every trigger in DOP Subjects.
+          second: "The left portrait is of a Latino woman in her 40s. The right portrait is of l3xi, a Caucasian
+          woman in her 40s." Description is what follows the trigger. Train the result as one more dataset with DOP
+          on and every trigger in DOP Subjects.
         </div>
 
         <div className="space-y-2">
@@ -107,6 +110,13 @@ export default function SideBySideModal({ isOpen, onClose, datasets, onBuilt }: 
                 value={row.trigger}
                 placeholder="l3xi"
                 onChange={value => updateRow(i, { trigger: value })}
+              />
+              <TextInput
+                className="w-56"
+                label={i === 0 ? 'Description' : undefined}
+                value={row.description}
+                placeholder="a Caucasian woman in her 40s"
+                onChange={value => updateRow(i, { description: value })}
               />
               <SelectInput
                 className="w-36"
