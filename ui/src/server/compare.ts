@@ -265,6 +265,7 @@ export interface WorkflowMap {
   positive: string | null;
   negative: string | null;
   latent: string | null;
+  latentDims: { width: string; height: string } | null;
   loader: Partial<Record<'model' | 'te' | 'vae', { node: string; input: string }>>;
   samplerTargets: { node: string; input: string; field: string }[];
   keep: string[];
@@ -338,12 +339,32 @@ export async function analyzeWorkflow(source: ApiPrompt): Promise<WorkflowMap> {
     const positive = textNode(posLink);
     const negative = negLink ? textNode(negLink) : null;
 
+    // Size control: find the node holding LITERAL dimensions — either width/height or
+    // input_width/input_height (aspect-ratio / size nodes that feed EmptyLatentImage via
+    // links). Writing literals there drives the output for any workflow. A plain
+    // EmptyLatentImage whose dims are linked is the last resort (the write detaches the link).
     const latentLink = s.latent_image ?? s.latent;
-    const hasSize = (id: string) => 'width' in api[id].inputs && 'height' in api[id].inputs;
+    const DIM_PAIRS: [string, string][] = [
+      ['width', 'height'],
+      ['input_width', 'input_height'],
+    ];
+    const dimPairOf = (id: string): [string, string] | null => {
+      const ins = api[id]?.inputs ?? {};
+      return DIM_PAIRS.find(([w, h]) => w in ins && h in ins && !isLink(ins[w]) && !isLink(ins[h])) ?? null;
+    };
+    const upstreamLatent = g.upstreamFrom(latentLink);
     const latent =
-      g.upstreamFrom(latentLink).find(id => /latent/i.test(api[id].class_type) && hasSize(id)) ??
-      keep.find(id => /empty.*latent/i.test(api[id].class_type) && hasSize(id)) ??
+      upstreamLatent.find(id => dimPairOf(id)) ??
+      keep.find(id => dimPairOf(id)) ??
+      upstreamLatent.find(id => /latent/i.test(api[id].class_type) && 'width' in api[id].inputs) ??
+      keep.find(id => /empty.*latent/i.test(api[id].class_type) && 'width' in api[id].inputs) ??
       null;
+    const latentDims: WorkflowMap['latentDims'] = latent
+      ? (() => {
+          const p = dimPairOf(latent) ?? (['width', 'height'] as [string, string]);
+          return { width: p[0], height: p[1] };
+        })()
+      : null;
 
     const loader: WorkflowMap['loader'] = {};
     for (const [field, names] of Object.entries(LOADER_FIELDS) as [keyof typeof LOADER_FIELDS, string[]][]) {
@@ -365,7 +386,7 @@ export async function analyzeWorkflow(source: ApiPrompt): Promise<WorkflowMap> {
       }
     }
 
-    return { lora, loraClass: api[lora].class_type, sampler, positive, negative, latent, loader, samplerTargets, keep };
+    return { lora, loraClass: api[lora].class_type, sampler, positive, negative, latent, latentDims, loader, samplerTargets, keep };
   }
   throw new Error('Found a LoRA loader, but nothing it feeds reaches a sampler and an image output (Save/Preview).');
 }
@@ -387,9 +408,9 @@ export async function workflowValues(api: ApiPrompt, map: WorkflowMap) {
   for (const t of map.samplerTargets) if (out[t.field] === undefined) out[t.field] = await read(t.node, t.input);
   if (map.positive) out.prompt = await read(map.positive, 'text');
   if (map.negative && map.negative !== map.positive) out.neg = await read(map.negative, 'text');
-  if (map.latent) {
-    out.width = await read(map.latent, 'width');
-    out.height = await read(map.latent, 'height');
+  if (map.latent && map.latentDims) {
+    out.width = await read(map.latent, map.latentDims.width);
+    out.height = await read(map.latent, map.latentDims.height);
   }
   for (const [field, t] of Object.entries(map.loader)) if (t) out[field] = api[t.node].inputs[t.input];
   return out;
@@ -464,9 +485,9 @@ export async function buildPrompt(
 
   if (map.positive) api[map.positive].inputs.text = cell.prompt;
   if (map.negative && map.negative !== map.positive && keep.has(map.negative)) api[map.negative].inputs.text = s.neg ?? '';
-  if (map.latent) {
-    api[map.latent].inputs.width = s.width;
-    api[map.latent].inputs.height = s.height;
+  if (map.latent && map.latentDims) {
+    api[map.latent].inputs[map.latentDims.width] = s.width;
+    api[map.latent].inputs[map.latentDims.height] = s.height;
     if ('batch_size' in api[map.latent].inputs) api[map.latent].inputs.batch_size = 1;
   }
   const values: Record<string, any> = { seed: s.seed, steps: s.steps, cfg: s.cfg, sampler: s.sampler, scheduler: s.scheduler };
