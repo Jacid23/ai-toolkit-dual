@@ -83,5 +83,6 @@ model SavedPrompt {
   id         String   @id @default(uuid())
   name       String
   text       String
+  group      String   @default("")
   created_at DateTime @default(now())
 }
