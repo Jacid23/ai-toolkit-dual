@@ -37,6 +37,7 @@ import { gpuSelectOptions, isSplitSelection } from '@/utils/dualGpu';
 import TextEncoderSelect, { supportsTextEncoderSelect } from '@/components/TextEncoderSelect';
 import VaeSelect from '@/components/VaeSelect';
 import DatasetPromptLink from '@/components/DatasetPromptLink';
+import ComfySampleSelect from '@/components/ComfySampleSelect';
 
 type Props = {
   jobConfig: JobConfig;
@@ -1742,6 +1743,12 @@ export default function SimpleJob({
         </div>
         <div>
           <Card title="Sample">
+            <div className="pb-3">
+              <ComfySampleSelect
+                value={jobConfig.config.process[0].sample.comfy_workflow}
+                onChange={value => setJobConfig(value, 'config.process[0].sample.comfy_workflow')}
+              />
+            </div>
             <div className={sampleTopStyleClass}>
               <div>
                 <NumberInput
