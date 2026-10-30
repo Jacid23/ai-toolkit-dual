@@ -92,6 +92,9 @@ class SampleItem:
 class SampleConfig:
     def __init__(self, **kwargs):
         self.sampler: str = kwargs.get('sampler', 'ddpm')
+        # DUAL BUILD: when set, training samples render through ComfyUI (this named
+        # API-format workflow) on ComfyUI's own GPU instead of the internal sampler.
+        self.comfy_workflow = kwargs.get('comfy_workflow', None)
         self.sample_every: int = kwargs.get('sample_every', 100)
         self.sample_start_step: int = kwargs.get('sample_start_step', 0)
         # explicit list of steps to sample at; if non-empty it OVERRIDES

@@ -253,6 +253,7 @@ export interface SampleConfig {
   sample_every: number;
   sample_start_step: number;
   sample_schedule?: number[];
+  comfy_workflow?: string; // when set, training samples render via ComfyUI instead of the internal sampler
   sample_on_save?: boolean;
   width: number;
   height: number;

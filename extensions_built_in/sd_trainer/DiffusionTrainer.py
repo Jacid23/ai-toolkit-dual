@@ -437,8 +437,55 @@ class DiffusionTrainer(SDTrainer):
             self.update_status(
                 "running", f"Generating images - {img_num + 1}/{total_imgs}")
 
+    def _fire_comfy_sample(self, step=None) -> bool:
+        # DUAL BUILD: if a comfy_workflow is configured, POST to the UI's
+        # comfy_sample endpoint in a daemon thread so training continues immediately;
+        # the endpoint renders on ComfyUI (its own GPU) and drops images into this
+        # job's samples/ folder. Returns True if dispatched (so the internal sampler
+        # is skipped); False on any issue so we fall back to internal sampling.
+        workflow = getattr(self.sample_config, 'comfy_workflow', None)
+        if not workflow:
+            return False
+        try:
+            import json as _json
+            import urllib.request
+
+            url_base = os.environ.get('AITK_UI_URL')
+            if not url_base or not self.job_id:
+                return False
+            url = url_base.rstrip('/') + f"/api/jobs/{self.job_id}/comfy_sample"
+            prompts = [s.prompt for s in (self.sample_config.samples or []) if getattr(s, 'prompt', None)]
+            body = _json.dumps(
+                {
+                    'workflow': workflow,
+                    'prompts': prompts,
+                    'step': int(step) if step is not None else int(getattr(self, 'step_num', 0)),
+                }
+            ).encode('utf-8')
+
+            def _post():
+                try:
+                    req = urllib.request.Request(
+                        url, data=body, headers={'Content-Type': 'application/json'}, method='POST'
+                    )
+                    urllib.request.urlopen(req, timeout=60 * 20)  # endpoint submits + retrieves; can run a while
+                except Exception as e:
+                    print(f"ComfyUI sample request failed: {e}")
+
+            threading.Thread(target=_post, daemon=True).start()
+            print(f"Dispatched ComfyUI sample for step {step} (rendering on ComfyUI's GPU, training continues)")
+            return True
+        except Exception as e:
+            print(f"Could not dispatch ComfyUI sample, using internal sampler: {e}")
+            return False
+
     def sample(self, step=None, is_first=False):
         self.maybe_stop()
+        # route samples through ComfyUI when configured (non-blocking); else internal sampler
+        if self._fire_comfy_sample(step):
+            self.update_status("running", "Training")
+            self.maybe_stop()
+            return
         total_imgs = len(self.sample_config.prompts)
         self.update_status("running", f"Generating images - 0/{total_imgs}")
         super().sample(step, is_first)

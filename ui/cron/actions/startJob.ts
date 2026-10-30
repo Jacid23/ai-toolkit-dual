@@ -248,6 +248,8 @@ const startAndWatchJob = (job: Job) => {
 
     const additionalEnv: any = {
       AITK_JOB_ID: jobID,
+      // so the trainer can POST to the UI's comfy_sample endpoint (ComfyUI samples)
+      AITK_UI_URL: process.env.AITK_UI_URL || `http://127.0.0.1:${process.env.AITK_UI_PORT || '8675'}`,
       CUDA_DEVICE_ORDER: 'PCI_BUS_ID',
       CUDA_VISIBLE_DEVICES: `${job.gpu_ids}`,
       IS_AI_TOOLKIT_UI: '1',
