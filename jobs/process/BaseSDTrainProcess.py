@@ -316,6 +316,20 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 set_attr(self.sample_config, 'sample_steps', int(updates['sample_steps']))
             if 'guidance_scale' in updates:
                 set_attr(self.sample_config, 'guidance_scale', float(updates['guidance_scale']))
+            if 'sample_width' in updates:
+                set_attr(self.sample_config, 'width', int(updates['sample_width']))
+            if 'sample_height' in updates:
+                set_attr(self.sample_config, 'height', int(updates['sample_height']))
+            if 'sample_seed' in updates:
+                set_attr(self.sample_config, 'seed', int(updates['sample_seed']))
+            if 'sampler' in updates:
+                set_attr(self.sample_config, 'sampler', str(updates['sampler']))
+            if 'sample_prompts' in updates:
+                prompts = [str(x).strip() for x in (updates['sample_prompts'] or []) if str(x).strip()]
+                if prompts:
+                    from toolkit.config_modules import SampleItem
+                    self.sample_config.samples = [SampleItem(self.sample_config, prompt=p) for p in prompts]
+                    applied.append('sample_prompts')
             if 'sample_schedule' in updates:
                 set_attr(self.sample_config, 'sample_schedule', as_steps(updates['sample_schedule']))
             if 'save_every' in updates:

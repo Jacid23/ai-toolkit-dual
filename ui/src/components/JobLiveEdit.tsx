@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { Job } from '@prisma/client';
-import { NumberInput, TextInput } from '@/components/formInputs';
+import { NumberInput, TextInput, TextAreaInput } from '@/components/formInputs';
 import { getJobConfig } from '@/utils/jobs';
 import { apiClient } from '@/utils/api';
 import Card from '@/components/Card';
@@ -17,6 +17,15 @@ export default function JobLiveEdit({ job }: { job: Job }) {
   const [lr, setLr] = useState<number | null>(p.train?.lr ?? null);
   const [sampleEvery, setSampleEvery] = useState<number | null>(p.sample?.sample_every ?? null);
   const [sampleSteps, setSampleSteps] = useState<number | null>(p.sample?.sample_steps ?? null);
+  const [cfg, setCfg] = useState<number | null>(p.sample?.guidance_scale ?? null);
+  const [sampleW, setSampleW] = useState<number | null>(p.sample?.width ?? null);
+  const [sampleH, setSampleH] = useState<number | null>(p.sample?.height ?? null);
+  const [seed, setSeed] = useState<number | null>(p.sample?.seed ?? null);
+  const [sampler, setSampler] = useState<string>(p.sample?.sampler ?? '');
+  const curPrompts: string[] = ((p.sample?.samples as any[]) || [])
+    .map(x => x?.prompt)
+    .filter((x: any) => typeof x === 'string');
+  const [promptsText, setPromptsText] = useState<string>(curPrompts.join('\n'));
   const [scheduleText, setScheduleText] = useState<string>(curSchedule.join(', '));
 
   const [pending, setPending] = useState<Record<string, any> | null>(null);
@@ -51,6 +60,16 @@ export default function JobLiveEdit({ job }: { job: Job }) {
     if (lr != null) updates.lr = lr;
     if (sampleEvery != null) updates.sample_every = sampleEvery;
     if (sampleSteps != null) updates.sample_steps = sampleSteps;
+    if (cfg != null) updates.guidance_scale = cfg;
+    if (sampleW != null) updates.sample_width = sampleW;
+    if (sampleH != null) updates.sample_height = sampleH;
+    if (seed != null) updates.sample_seed = seed;
+    if (sampler.trim()) updates.sampler = sampler.trim();
+    const promptList = promptsText
+      .split('\n')
+      .map(x => x.trim())
+      .filter(Boolean);
+    if (promptList.length) updates.sample_prompts = promptList;
     const sched = parseSteps(scheduleText);
     if (sched.length) updates.save_schedule = sched;
     try {
@@ -100,6 +119,26 @@ export default function JobLiveEdit({ job }: { job: Job }) {
           onChange={v => setSampleSteps(v)}
           min={1}
         />
+        <NumberInput label="Guidance (CFG)" className="pt-2" value={cfg} onChange={v => setCfg(v)} min={0} />
+        <NumberInput label="Sample Width" className="pt-2" value={sampleW} onChange={v => setSampleW(v)} min={64} />
+        <NumberInput label="Sample Height" className="pt-2" value={sampleH} onChange={v => setSampleH(v)} min={64} />
+        <NumberInput label="Seed" className="pt-2" value={seed} onChange={v => setSeed(v)} min={0} />
+        <div className="pt-2">
+          <TextInput
+            label="Sampler"
+            value={sampler}
+            onChange={(v: string) => setSampler(v)}
+            placeholder="eg. ddpm, dpmpp_2m, euler"
+          />
+        </div>
+        <div className="pt-2">
+          <TextAreaInput
+            label="Sample Prompts (one per line)"
+            value={promptsText}
+            onChange={(v: string) => setPromptsText(v)}
+            rows={4}
+          />
+        </div>
         <div className="pt-2">
           <TextInput
             label="Save / Sample at steps"
