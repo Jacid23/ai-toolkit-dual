@@ -36,6 +36,7 @@ import { isMac } from '@/helpers/basic';
 import { gpuSelectOptions, isSplitSelection } from '@/utils/dualGpu';
 import TextEncoderSelect, { supportsTextEncoderSelect } from '@/components/TextEncoderSelect';
 import VaeSelect from '@/components/VaeSelect';
+import DatasetPromptLink from '@/components/DatasetPromptLink';
 
 type Props = {
   jobConfig: JobConfig;
@@ -1451,6 +1452,19 @@ export default function SimpleJob({
                         onChange={value => setJobConfig(value, `config.process[0].datasets[${i}].folder_path`)}
                         options={datasetOptions}
                       />
+                      {i === 0 && (
+                        <div className="pt-2">
+                          <DatasetPromptLink
+                            folderPath={dataset.folder_path}
+                            onLoadPrompts={prompts =>
+                              setJobConfig(
+                                prompts.map(p => ({ prompt: p.text })),
+                                `config.process[0].sample.samples`,
+                              )
+                            }
+                          />
+                        </div>
+                      )}
                       {modelArch?.additionalSections?.includes('datasets.control_path') && (
                         <SelectInput
                           label="Control Dataset"
