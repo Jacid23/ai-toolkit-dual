@@ -1,7 +1,8 @@
 'use client';
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { Dialog, DialogBackdrop, DialogPanel } from '@headlessui/react';
-import { X } from 'lucide-react';
+import { RefreshCw, X } from 'lucide-react';
+import { TransformWrapper, TransformComponent } from 'react-zoom-pan-pinch';
 import { encodeFilePathForUrl } from '@/utils/basic';
 import { AlignedRow, CFG_LABELS, CompareCellRow, ScannedFile, ScannedRun } from '@/utils/compare';
 
@@ -69,16 +70,22 @@ export function CompareImageViewer({
   pos,
   onChange,
   onClose,
+  onRegenerate,
 }: {
   ctx: GridCtx;
   pos: ImagePos | null;
   onChange: (p: ImagePos) => void;
   onClose: () => void;
+  onRegenerate?: (file: ScannedFile, prompt: string) => Promise<string | null>; // error text or null
 }) {
   const file = pos ? ctx.rows[pos.row]?.cells[pos.run] : null;
   const prompt = pos ? ctx.prompts[pos.prompt] : '';
   const cell = file && pos ? ctx.cellOf(file, prompt) : undefined;
   const run = pos ? ctx.runs[pos.run] : null;
+  const [sending, setSending] = useState(false);
+  const [regenError, setRegenError] = useState<string | null>(null);
+  useEffect(() => setRegenError(null), [file?.path, prompt]);
+  const regenerating = sending || cell?.status === 'pending';
   let snap: any = {};
   try {
     snap = JSON.parse(cell?.settings || '{}');
@@ -97,10 +104,12 @@ export function CompareImageViewer({
       if (c?.image_path) return onChange(p);
     }
   };
+  // one training: prompts sit side by side like the Samples viewer, so ←/→ moves between them
+  const single = ctx.runs.length === 1;
   useKeys(!!pos, {
     Escape: onClose,
-    ArrowLeft: () => step(-1, 0, 0),
-    ArrowRight: () => step(1, 0, 0),
+    ArrowLeft: () => (single ? step(0, 0, -1) : step(-1, 0, 0)),
+    ArrowRight: () => (single ? step(0, 0, 1) : step(1, 0, 0)),
     ArrowUp: () => step(0, -1, 0),
     ArrowDown: () => step(0, 1, 0),
     '[': () => step(0, 0, -1),
@@ -113,11 +122,25 @@ export function CompareImageViewer({
       <div className="fixed inset-0 z-30 flex items-center justify-center p-0 sm:p-4">
         <DialogPanel className="relative rounded-none sm:rounded-lg bg-gray-800 shadow-xl overflow-hidden flex flex-col sm:max-w-[95vw] sm:max-h-[95vh]">
           {cell?.image_path && (
-            <img
-              src={imgUrl(cell.image_path)}
-              alt=""
-              className="w-auto h-auto max-w-full sm:max-w-[95vw] max-h-[78vh] object-contain"
-            />
+            // wheel / double-click zoom, drag to pan — same as the Samples viewer
+            <TransformWrapper
+              key={cell.image_path}
+              initialScale={1}
+              minScale={1}
+              maxScale={6}
+              doubleClick={{ mode: 'toggle', step: 2 }}
+              wheel={{ step: 0.2 }}
+              panning={{ disabled: false, allowRightClickPan: false }}
+            >
+              <TransformComponent>
+                <img
+                  src={imgUrl(cell.image_path)}
+                  alt=""
+                  draggable={false}
+                  className="w-auto h-auto max-w-full sm:max-w-[95vw] max-h-[78vh] object-contain select-none"
+                />
+              </TransformComponent>
+            </TransformWrapper>
           )}
           <div className="bg-gray-950 text-sm flex gap-4 px-4 py-2">
             {run && file && pos && (
@@ -128,6 +151,30 @@ export function CompareImageViewer({
                   <span className="text-gray-400 ml-2 whitespace-nowrap">· {fmtCfg(file.step?.toLocaleString())} steps</span>
                 </div>
                 <DiffList run={run} keys={ctx.diffKeys} cols={3} />
+              </div>
+            )}
+            {onRegenerate && file && (
+              <div className="flex flex-col items-end gap-0.5 shrink-0">
+                <button
+                  type="button"
+                  disabled={regenerating}
+                  onClick={async () => {
+                    setSending(true);
+                    setRegenError(null);
+                    setRegenError(await onRegenerate(file, prompt));
+                    setSending(false);
+                  }}
+                  title="Re-render this image on ComfyUI with the comparison's current settings (replaces it when done)"
+                  className="inline-flex items-center gap-1.5 rounded-md bg-gray-700 hover:bg-gray-600 px-2.5 py-1 text-xs text-gray-100 disabled:opacity-60"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${regenerating ? 'animate-spin' : ''}`} />
+                  {regenerating ? 'Regenerating…' : 'Regenerate'}
+                </button>
+                {(regenError || (cell?.status === 'error' && cell.error)) && (
+                  <span className="text-[11px] text-red-400 max-w-[260px] text-right break-words">
+                    {regenError || cell?.error}
+                  </span>
+                )}
               </div>
             )}
             <div className="text-xs whitespace-nowrap">
@@ -156,7 +203,7 @@ export function CompareImageViewer({
             <X />
           </button>
           <span className="absolute top-2 left-2 text-[11px] bg-gray-950/70 text-gray-300 px-2 py-0.5 rounded">
-            ← → training · ↑ ↓ row · [ ] prompt · Esc
+            {single ? '← → prompt · ↑ ↓ step' : '← → training · ↑ ↓ row · [ ] prompt'} · wheel zoom · Esc
           </span>
         </DialogPanel>
       </div>

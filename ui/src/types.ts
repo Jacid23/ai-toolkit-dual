@@ -248,12 +248,24 @@ export interface SampleItem {
   ctrl_img_3?: string | null;
 }
 
+// DUAL BUILD: blank = the workflow's own value
+export interface ComfySampleSettings {
+  model?: string;
+  te?: string;
+  vae?: string;
+  sampler?: string;
+  scheduler?: string;
+  strength?: number;
+}
+
 export interface SampleConfig {
   sampler: string;
   sample_every: number;
   sample_start_step: number;
   sample_schedule?: number[];
-  comfy_workflow?: string; // when set, training samples render via ComfyUI instead of the internal sampler
+  comfy_sample?: boolean; // training samples render via ComfyUI (Settings → default sample workflow)
+  comfy_workflow?: string; // legacy per-job workflow; still honored, overrides the default
+  comfy?: ComfySampleSettings; // ComfyUI-only choices; size/steps/guidance/seed/neg come from this card
   sample_on_save?: boolean;
   width: number;
   height: number;

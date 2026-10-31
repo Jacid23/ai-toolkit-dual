@@ -5,10 +5,12 @@ import { cellKey, CompareData } from '@/utils/compare';
 
 // Queue every image this comparison is missing (or all of them) in ComfyUI. Comfy runs them in
 // order; /sync collects the finished images, so generation keeps going if the page is closed.
+// { only: [{ loraPath, prompt }] } regenerates just those images with the current settings.
 export async function POST(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   try {
-    const { mode } = await request.json().catch(() => ({ mode: 'missing' }));
+    const { mode, only } = await request.json().catch(() => ({ mode: 'missing' }));
+    const onlyKeys = Array.isArray(only) ? new Set(only.map((c: any) => cellKey(c?.loraPath, c?.prompt))) : null;
     const comparison = await prisma.comparison.findUnique({ where: { id } });
     if (!comparison) return NextResponse.json({ error: 'Comparison not found' }, { status: 404 });
     const data = JSON.parse(comparison.data) as CompareData;
@@ -31,6 +33,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
         .filter(f => {
           const c = existing.get(cellKey(f.path, prompt));
           if (c?.status === 'pending') return false;
+          if (onlyKeys) return onlyKeys.has(cellKey(f.path, prompt));
           return mode === 'all' || c?.status !== 'done';
         })
         .map(f => ({ loraPath: f.path, prompt })),

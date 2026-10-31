@@ -262,7 +262,10 @@ export default function ComparePage() {
   const rowNum = useCallback((row: number) => (order === 'desc' ? rows.length - row : row + 1), [order, rows.length]);
   const prompts = data?.prompts ?? [];
   const realPrompts = prompts.filter(p => p.trim() !== '');
-  const shownPrompts = activePrompt === -1 ? prompts.map((_, i) => i) : [Math.min(activePrompt, Math.max(0, prompts.length - 1))];
+  // one training reads like its Samples tab: a row per checkpoint, a column per prompt
+  const single = runs.length === 1;
+  const shownPrompts =
+    single || activePrompt === -1 ? prompts.map((_, i) => i) : [Math.min(activePrompt, Math.max(0, prompts.length - 1))];
   const diffKeys = useMemo(
     () => Object.keys(CFG_LABELS).filter(k => new Set(runs.map(r => fmtCfg(r.cfg?.[k]))).size > 1),
     [runs],
@@ -293,6 +296,48 @@ export default function ComparePage() {
     } finally {
       setGenerating(false);
     }
+  };
+  // one image again, with the comparison's current settings; the old one stays until it's done
+  const regenerateCell = async (f: ScannedFile, prompt: string): Promise<string | null> => {
+    if (!current) return null;
+    try {
+      await flushSave();
+      const res = await apiClient.post(`/api/compare/${current.id}/generate`, { only: [{ loraPath: f.path, prompt }] });
+      await sync();
+      return res.data.failed ? res.data.firstError : null;
+    } catch (e) {
+      return errText(e);
+    }
+  };
+
+  // render the AITK trainings' missing training samples (checkpoints with none, plus the
+  // step-0 baseline) straight into each job's samples/ folder, on ComfyUI
+  const [filling, setFilling] = useState(false);
+  const fillTrainingSamples = async () => {
+    if (!data) return;
+    const jobs = data.runs.filter((r): r is Extract<CompareRun, { kind: 'job' }> => r.kind === 'job');
+    if (!jobs.length) {
+      setNotice({ kind: 'info', text: 'Only AITK trainings have training samples to fill in; folders of LoRAs do not.' });
+      return;
+    }
+    setFilling(true);
+    setNotice(null);
+    const parts: string[] = [];
+    const errors: string[] = [];
+    for (const run of jobs) {
+      try {
+        const res = await apiClient.post(`/api/jobs/${run.jobId}/comfy_backfill`, { workflow: data.settings.workflow || null });
+        if (res.data.queued) parts.push(`${run.name}: ${res.data.queued} step${res.data.queued === 1 ? '' : 's'}`);
+        else if (res.data.running) parts.push(`${run.name}: already filling`);
+      } catch (e) {
+        errors.push(`${run.name}: ${errText(e)}`);
+      }
+    }
+    setFilling(false);
+    if (errors.length) setNotice({ kind: 'error', text: errors.join(' · ') });
+    else if (parts.length)
+      setNotice({ kind: 'info', text: `Rendering missing training samples on ComfyUI — ${parts.join(' · ')}. They appear on each training's Samples tab as they finish.` });
+    else setNotice({ kind: 'info', text: 'Every checkpoint already has training samples.' });
   };
   const cancel = async () => {
     if (!current) return;
@@ -360,7 +405,7 @@ export default function ComparePage() {
   }
 
   const sub = shownPrompts.length;
-  const minW = sub > 1 ? Math.max(90, Math.round(data.minSize * 0.7)) : data.minSize;
+  const minW = sub > 1 && !single ? Math.max(90, Math.round(data.minSize * 0.7)) : data.minSize;
   const aspect = `${data.settings.width || 1} / ${data.settings.height || 1}`;
 
   return (
@@ -404,8 +449,8 @@ export default function ComparePage() {
 
       <div className="absolute top-12 left-0 right-0 bottom-0 flex">
         <div className="flex-1 min-w-0 overflow-auto px-4 pb-6">
-          {/* prompt tabs */}
-          <div className="flex gap-0.5 border-b border-gray-800 mb-2.5 overflow-x-auto pt-2">
+          {/* prompt tabs (one training shows every prompt as a column instead) */}
+          <div className={classNames('flex gap-0.5 border-b border-gray-800 mb-2.5 overflow-x-auto pt-2', single && 'hidden')}>
             {prompts.map((p, i) => {
               const done = allFiles.filter(f => cellOf(f, p)?.status === 'done').length;
               return (
@@ -459,6 +504,15 @@ export default function ComparePage() {
             >
               <RefreshCw className={classNames('w-3.5 h-3.5', scanning && 'animate-spin')} />
             </button>
+            <button
+              onClick={fillTrainingSamples}
+              disabled={filling}
+              title="Render the missing training samples (checkpoints with none, plus the step-0 baseline) on ComfyUI into each training's Samples tab"
+              className="px-2.5 py-1 rounded-md bg-gray-800 border border-gray-700 hover:bg-gray-700 text-gray-200 disabled:opacity-50 inline-flex items-center gap-1.5"
+            >
+              {filling && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+              Fill training samples
+            </button>
             <span className="text-gray-400 ml-2">Order</span>
             <div className="inline-flex border border-gray-700 rounded-md overflow-hidden">
               <button className={segBtn(order === 'asc')} onClick={() => update(d => ({ ...d, order: 'asc' }))}>
@@ -494,11 +548,11 @@ export default function ComparePage() {
                 </button>
               ))}
             </div>
-            <span className="text-gray-400 ml-2">Min size</span>
+            <span className="text-gray-400 ml-2">Size</span>
             <input
               type="range"
               min={100}
-              max={420}
+              max={640}
               value={data.minSize}
               onChange={e => update(d => ({ ...d, minSize: Number(e.target.value) }))}
               className="w-28"
@@ -527,10 +581,10 @@ export default function ComparePage() {
           ) : (
             <div
               className="grid gap-1"
-              style={{ gridTemplateColumns: `36px repeat(${runs.length * sub}, minmax(${minW}px, 1fr))` }}
+              style={{ gridTemplateColumns: `${single ? 64 : 36}px repeat(${runs.length * sub}, ${minW}px)` }}
             >
               <div className="sticky left-0 top-0 z-[4] bg-gray-950 text-[11px] text-gray-500 flex items-end justify-center pb-1.5">
-                #
+                {single ? 'Step' : '#'}
               </div>
               {runs.map((run, i) => (
                 <div
@@ -582,23 +636,43 @@ export default function ComparePage() {
                   </div>
                 </div>
               ))}
-              {sub > 1 && (
+              {single ? (
                 <>
                   <div />
-                  {runs.map((_, ri) =>
-                    shownPrompts.map(pi => (
-                      <div key={`${ri}-${pi}`} className="text-[11px] text-gray-500 px-1 truncate" title={prompts[pi]}>
-                        P{pi + 1} · {prompts[pi]}
+                  {shownPrompts.map(pi => {
+                    const done = allFiles.filter(f => cellOf(f, prompts[pi])?.status === 'done').length;
+                    return (
+                      <div key={pi} className="px-1 pb-0.5 min-w-0" title={prompts[pi]}>
+                        <div className="flex items-center gap-2 text-[12px] font-semibold text-gray-200">
+                          Prompt {pi + 1}
+                          <span className={classNames('ml-auto text-[11px] font-normal', done < allFiles.length ? 'text-amber-400' : 'text-gray-500')}>
+                            {done}/{allFiles.length}
+                          </span>
+                        </div>
+                        <div className="text-[11px] text-gray-500 line-clamp-2 break-words">{prompts[pi] || '(empty)'}</div>
                       </div>
-                    )),
-                  )}
+                    );
+                  })}
                 </>
+              ) : (
+                sub > 1 && (
+                  <>
+                    <div />
+                    {runs.map((_, ri) =>
+                      shownPrompts.map(pi => (
+                        <div key={`${ri}-${pi}`} className="text-[11px] text-gray-500 px-1 truncate" title={prompts[pi]}>
+                          P{pi + 1} · {prompts[pi]}
+                        </div>
+                      )),
+                    )}
+                  </>
+                )
               )}
 
               {rows.map((row, r) => (
                 <RowLine
                   key={r}
-                  label={rowNum(r)}
+                  label={single ? fmtCfg(row.cells[0]?.step?.toLocaleString()) : rowNum(r)}
                   onOpen={() => setRowCard({ row: r, prompt: shownPrompts[0] })}
                   onClear={() => clearRow(r)}
                   onRemove={() => removeRow(r)}
@@ -641,9 +715,11 @@ export default function ComparePage() {
                               </div>
                             )}
                             {!c && <div className="absolute inset-0 grid place-items-center text-gray-500 text-xs">Not generated</div>}
-                            <span className="absolute left-1 bottom-1 text-[10px] px-1.5 py-px rounded bg-gray-950/75 text-gray-300">
-                              #{ri + 1} · {fmtCfg(f.step?.toLocaleString())} steps
-                            </span>
+                            {!single && (
+                              <span className="absolute left-1 bottom-1 text-[10px] px-1.5 py-px rounded bg-gray-950/75 text-gray-300">
+                                #{ri + 1} · {fmtCfg(f.step?.toLocaleString())} steps
+                              </span>
+                            )}
                           </div>
                           {data.infoMode === 'cell' && (
                             <div className="border border-gray-800 border-t-[3px] rounded-md px-2 py-1.5 text-xs" style={{ borderTopColor: runColor(ri) }}>
@@ -709,7 +785,13 @@ export default function ComparePage() {
         onClose={() => setAddOpen(false)}
         onAdd={newRuns => update(d => ({ ...d, runs: [...d.runs, ...newRuns] }))}
       />
-      <CompareImageViewer ctx={ctx} pos={viewer} onChange={setViewer} onClose={() => setViewer(null)} />
+      <CompareImageViewer
+        ctx={ctx}
+        pos={viewer}
+        onChange={setViewer}
+        onClose={() => setViewer(null)}
+        onRegenerate={regenerateCell}
+      />
       <CompareRowCard
         ctx={ctx}
         pos={rowCard}
@@ -734,7 +816,7 @@ function RowLine({
   onRemove,
   children,
 }: {
-  label: number;
+  label: React.ReactNode;
   onOpen: () => void;
   onClear: () => void;
   onRemove: () => void;

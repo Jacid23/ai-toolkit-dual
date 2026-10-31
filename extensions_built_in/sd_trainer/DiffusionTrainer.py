@@ -1,4 +1,5 @@
 from collections import OrderedDict
+import glob
 import os
 import sqlite3
 import asyncio
@@ -296,6 +297,38 @@ class DiffusionTrainer(SDTrainer):
         if self.accelerator.is_main_process and self.is_ui_trainer:
             self._run_async_operation(self._update_key(key, value))
 
+    def persist_live_train_steps(self, steps, save_schedule=None):
+        # DUAL BUILD: a step total (and save schedule) changed mid-run via Live Edit or
+        # "+1 checkpoint" is written back to the saved job once it applies, so the overview
+        # shows it and a later resume trains to the new total.
+        if not self.accelerator.is_main_process or not self.is_ui_trainer:
+            return
+        import json
+
+        def _do_update():
+            with self._db_connect() as conn:
+                cursor = conn.cursor()
+                cursor.execute("BEGIN IMMEDIATE")
+                try:
+                    row = cursor.execute("SELECT job_config FROM Job WHERE id = ?", (self.job_id,)).fetchone()
+                    if row:
+                        cfg = json.loads(row[0])
+                        proc = cfg['config']['process'][0]
+                        proc.setdefault('train', {})['steps'] = int(steps)
+                        if save_schedule is not None:
+                            proc.setdefault('save', {})['save_schedule'] = sorted(int(x) for x in save_schedule)
+                        cursor.execute(
+                            "UPDATE Job SET job_config = ?, total_steps = ? WHERE id = ?",
+                            (json.dumps(cfg), int(steps), self.job_id),
+                        )
+                finally:
+                    cursor.execute("COMMIT")
+
+        async def _op():
+            await self._execute_db_operation(_do_update)
+
+        self._run_async_operation(_op())
+
     async def _update_status(self, status: AITK_Status, info: Optional[str] = None):
         if not self.accelerator.is_main_process or not self.is_ui_trainer:
             return
@@ -437,52 +470,98 @@ class DiffusionTrainer(SDTrainer):
             self.update_status(
                 "running", f"Generating images - {img_num + 1}/{total_imgs}")
 
-    def _fire_comfy_sample(self, step=None) -> bool:
-        # DUAL BUILD: if a comfy_workflow is configured, POST to the UI's
-        # comfy_sample endpoint in a daemon thread so training continues immediately;
-        # the endpoint renders on ComfyUI (its own GPU) and drops images into this
-        # job's samples/ folder. Returns True if dispatched (so the internal sampler
-        # is skipped); False on any issue so we fall back to internal sampling.
+    def _fire_comfy_sample(self, step=None, is_first=False) -> bool:
+        # DUAL BUILD: if ComfyUI sampling is on, POST to the UI's comfy_sample endpoint
+        # in a daemon thread so training continues immediately; the endpoint renders on
+        # ComfyUI (its own GPU) and drops images into this job's samples/ folder.
+        # Returns False only when ComfyUI sampling is off (internal sampler runs). When it is on
+        # but ComfyUI can't take this step, the step's samples are skipped rather than rendered
+        # on the training GPU, which OOMs mid-run; they show as "Not sampled" in the UI and the
+        # Samples tab's regen queue renders them once ComfyUI is back.
         workflow = getattr(self.sample_config, 'comfy_workflow', None)
-        if not workflow:
+        if not workflow and not getattr(self.sample_config, 'comfy_sample', False):
             return False
+
+        def _skip(reason):
+            print_acc(
+                f"ComfyUI sampling unavailable ({reason}); skipped samples for step {step}. "
+                f"Regenerate them from the Samples tab once ComfyUI is back."
+            )
+            return True
+
         try:
             import json as _json
+            import urllib.error
+            import urllib.parse
             import urllib.request
+
+            def _error_of(e):
+                # the endpoint answers errors as JSON {error}; show that rather than "HTTP 400"
+                if isinstance(e, urllib.error.HTTPError):
+                    try:
+                        return _json.loads(e.read().decode('utf-8')).get('error') or str(e)
+                    except Exception:
+                        return str(e)
+                return str(e)
 
             url_base = os.environ.get('AITK_UI_URL')
             if not url_base or not self.job_id:
-                return False
+                return _skip("the UI address is unknown")
             url = url_base.rstrip('/') + f"/api/jobs/{self.job_id}/comfy_sample"
-            prompts = [s.prompt for s in (self.sample_config.samples or []) if getattr(s, 'prompt', None)]
-            body = _json.dumps(
-                {
-                    'workflow': workflow,
-                    'prompts': prompts,
-                    'step': int(step) if step is not None else int(getattr(self, 'step_num', 0)),
-                }
-            ).encode('utf-8')
+
+            # ask first: UI reachable, ComfyUI up, workflow loads
+            try:
+                check = url + (f"?workflow={urllib.parse.quote(workflow)}" if workflow else '')
+                urllib.request.urlopen(check, timeout=15)
+            except Exception as e:
+                return _skip(_error_of(e))
+            sample_config = self.first_sample_config if is_first else self.sample_config
+            prompts = []
+            for p in sample_config.prompts:
+                # same trigger handling as the internal sampler
+                if self.trigger_word is not None:
+                    p = self.sd.inject_trigger_into_prompt(p, self.trigger_word, add_if_not_present=False)
+                prompts.append(p)
+            step = int(step) if step is not None else int(getattr(self, 'step_num', 0))
+            payload = {'prompts': prompts, 'step': step}
+            if workflow:
+                payload['workflow'] = workflow
+            # the LoRA saved at this exact step (save runs before sample); otherwise the
+            # endpoint uses the newest checkpoint, or the base model if none exists yet
+            saved = getattr(self, '_comfy_saved', None)
+            if saved is not None and saved[0] == step:
+                payload['checkpoint'] = saved[1]
+            body = _json.dumps(payload).encode('utf-8')
 
             def _post():
                 try:
                     req = urllib.request.Request(
                         url, data=body, headers={'Content-Type': 'application/json'}, method='POST'
                     )
-                    urllib.request.urlopen(req, timeout=60 * 20)  # endpoint submits + retrieves; can run a while
+                    # endpoint submits + retrieves; can run a while
+                    with urllib.request.urlopen(req, timeout=60 * 20) as res:
+                        out = _json.loads(res.read().decode('utf-8') or '{}')
+                    saved_n = len(out.get('saved') or [])
+                    if out.get('errors') or out.get('pending'):
+                        print(
+                            f"ComfyUI sample step {step}: saved {saved_n}/{len(prompts)}"
+                            f"{', ' + str(out.get('pending')) + ' timed out' if out.get('pending') else ''}"
+                            f"{' — ' + '; '.join(out.get('errors') or []) if out.get('errors') else ''}"
+                        )
                 except Exception as e:
-                    print(f"ComfyUI sample request failed: {e}")
+                    print(f"ComfyUI sample step {step} failed: {_error_of(e)}")
 
             threading.Thread(target=_post, daemon=True).start()
             print(f"Dispatched ComfyUI sample for step {step} (rendering on ComfyUI's GPU, training continues)")
             return True
         except Exception as e:
-            print(f"Could not dispatch ComfyUI sample, using internal sampler: {e}")
-            return False
+            return _skip(f"could not dispatch: {e}")
 
     def sample(self, step=None, is_first=False):
         self.maybe_stop()
-        # route samples through ComfyUI when configured (non-blocking); else internal sampler
-        if self._fire_comfy_sample(step):
+        # route samples through ComfyUI when configured (non-blocking, or skipped if ComfyUI
+        # is down); internal sampler only when ComfyUI sampling is off
+        if self._fire_comfy_sample(step, is_first):
             self.update_status("running", "Training")
             self.maybe_stop()
             return
@@ -496,5 +575,15 @@ class DiffusionTrainer(SDTrainer):
         self.maybe_stop()
         self.update_status("running", "Saving model")
         super().save(step)
+        # remember what was just written so a ComfyUI sample at this step uses exactly it
+        try:
+            saves = glob.glob(os.path.join(self.save_root, '*.safetensors'))
+            if saves:
+                self._comfy_saved = (
+                    int(step) if step is not None else int(getattr(self, 'step_num', 0)),
+                    max(saves, key=os.path.getmtime),
+                )
+        except Exception:
+            pass
         self.maybe_stop()
         self.update_status("running", "Training")

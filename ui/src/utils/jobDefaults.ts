@@ -3,8 +3,8 @@
 // DUAL BUILD: per-model saved job defaults ("Save as model default" on the new
 // job page) and the default model new jobs open on (Settings).
 //
-// A saved default is the job's process config minus the per-job fields below,
-// stored per arch. Applying one overlays it on the job; "Reset to OEM default"
+// A saved default is the job's process config minus the per-job fields below
+// (dataset, sample prompts, save/sample schedules), stored per arch. Applying one overlays it on the job; "Reset to OEM default"
 // rebuilds the job from the built-in defaults for that arch.
 import { useCallback, useEffect, useState } from 'react';
 import { JobConfig } from '@/types';
@@ -21,6 +21,13 @@ export type SavedJobDefaults = { [arch: string]: SavedJobDefault };
 // fields that change every job (or are set by the app) and are never saved
 const PER_JOB_KEYS = ['datasets', 'trigger_word', 'training_folder', 'sqlite_db_path', 'device', 'performance_log_every'];
 
+// per-job fields inside a section: sample prompts and the custom save/sample step lists
+const PER_JOB_NESTED: [string, string][] = [
+  ['sample', 'samples'],
+  ['sample', 'sample_schedule'],
+  ['save', 'save_schedule'],
+];
+
 const perJobFields = (process: { [key: string]: any }) => {
   const kept: { [key: string]: any } = {};
   for (const key of PER_JOB_KEYS) {
@@ -32,6 +39,7 @@ const perJobFields = (process: { [key: string]: any }) => {
 export const extractJobDefault = (jobConfig: JobConfig, gpuIDs: string | null): SavedJobDefault => {
   const process: { [key: string]: any } = objectCopy(jobConfig.config.process[0]);
   for (const key of PER_JOB_KEYS) delete process[key];
+  for (const [section, key] of PER_JOB_NESTED) delete process[section]?.[key];
   return { process, gpu_ids: gpuIDs };
 };
 
@@ -39,7 +47,27 @@ export const extractJobDefault = (jobConfig: JobConfig, gpuIDs: string | null): 
 export const applyJobDefault = (jobConfig: JobConfig, saved: SavedJobDefault): JobConfig => {
   const next = objectCopy(jobConfig);
   const current = next.config.process[0] as any;
-  next.config.process[0] = { ...current, ...objectCopy(saved.process), ...perJobFields(current) };
+  const overlay: { [key: string]: any } = objectCopy(saved.process);
+  for (const [section, key] of PER_JOB_NESTED) {
+    // older saved defaults may still hold these; the job keeps its own
+    if (!overlay[section]) continue;
+    delete overlay[section][key];
+    if (current[section] && key in current[section]) overlay[section][key] = objectCopy(current[section][key]);
+  }
+  next.config.process[0] = { ...current, ...overlay, ...perJobFields(current) };
+  return next;
+};
+
+// a new job starts with no dataset, no sample prompts and no custom save/sample steps
+export const blankPerJobFields = (jobConfig: JobConfig): JobConfig => {
+  const next = objectCopy(jobConfig);
+  const proc = next.config.process[0] as any;
+  for (const d of proc.datasets ?? []) d.folder_path = '';
+  if (proc.sample) {
+    proc.sample.samples = [];
+    proc.sample.sample_schedule = [];
+  }
+  if (proc.save) proc.save.save_schedule = [];
   return next;
 };
 
@@ -53,6 +81,11 @@ export const oemJobForArch = (modelArchs: ModelArch[], jobConfig: JobConfig, arc
     next = path === undefined ? value : setNestedValue(next, value, path);
   };
   handleModelArchChange(modelArchs, next.config.process[0].model.arch, arch, objectCopy(next), set);
+  const proc = next.config.process[0] as any;
+  const current = jobConfig.config.process[0] as any;
+  for (const [section, key] of PER_JOB_NESTED) {
+    if (proc[section] && current[section] && key in current[section]) proc[section][key] = objectCopy(current[section][key]);
+  }
   return next;
 };
 

@@ -6,11 +6,23 @@ import { TopBar, MainContent } from '@/components/layout';
 import { apiClient } from '@/utils/api';
 import { SelectInput } from '@/components/formInputs';
 import { useModelArchs } from '@/extensions/modelArchs';
+import ComfyWorkflowImport from '@/components/ComfyWorkflowImport';
 
 export default function Settings() {
   const { settings, setSettings } = useSettings();
   const { groupedModelOptions } = useModelArchs();
   const [status, setStatus] = useState<'idle' | 'saving' | 'success' | 'error'>('idle');
+  const [comfyWorkflows, setComfyWorkflows] = useState<string[] | null>(null);
+
+  const loadComfyWorkflows = () =>
+    apiClient
+      .get('/api/compare/comfy')
+      .then(r => setComfyWorkflows(r.data?.ok ? (r.data.workflows ?? []) : null))
+      .catch(() => setComfyWorkflows(null));
+
+  useEffect(() => {
+    loadComfyWorkflows();
+  }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -156,8 +168,8 @@ export default function Settings() {
                   <label htmlFor="COMFY_URL" className="block text-sm font-medium mb-2">
                     ComfyUI Address
                     <div className="text-gray-500 text-sm ml-1">
-                      The running ComfyUI the Compare page sends its samples to. If blank, it will default to
-                      http://127.0.0.1:8188.
+                      The running ComfyUI that Compare and ComfyUI training samples render on. If blank, it will
+                      default to http://127.0.0.1:8188.
                     </div>
                   </label>
                   <input
@@ -169,6 +181,32 @@ export default function Settings() {
                     className="w-full px-4 py-2 bg-gray-800 border border-gray-700 rounded-lg focus:ring-2 focus:ring-gray-600 focus:border-transparent"
                     placeholder="http://127.0.0.1:8188"
                   />
+                </div>
+
+                <div>
+                  <SelectInput
+                    label="ComfyUI Sample Workflow"
+                    value={settings.COMFY_SAMPLE_WORKFLOW}
+                    onChange={value => setSettings(prev => ({ ...prev, COMFY_SAMPLE_WORKFLOW: value }))}
+                    options={[
+                      { value: '', label: comfyWorkflows ? 'None' : 'ComfyUI not reachable' },
+                      ...(comfyWorkflows ?? []).map(w => ({ value: w, label: w })),
+                      ...(settings.COMFY_SAMPLE_WORKFLOW && !(comfyWorkflows ?? []).includes(settings.COMFY_SAMPLE_WORKFLOW)
+                        ? [{ value: settings.COMFY_SAMPLE_WORKFLOW, label: settings.COMFY_SAMPLE_WORKFLOW }]
+                        : []),
+                    ]}
+                  />
+                  <ComfyWorkflowImport
+                    className="mt-1.5"
+                    onImported={async name => {
+                      await loadComfyWorkflows();
+                      setSettings(prev => ({ ...prev, COMFY_SAMPLE_WORKFLOW: name }));
+                    }}
+                  />
+                  <div className="text-gray-500 text-sm ml-1 mt-1">
+                    Jobs with &quot;Sample with ComfyUI&quot; on render their training samples with this API-format
+                    workflow, on ComfyUI&apos;s GPU. Save Settings after changing it.
+                  </div>
                 </div>
 
                 <div>

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, use } from 'react';
+import { useEffect, useState, use } from 'react';
 import { FaChevronLeft } from 'react-icons/fa';
 import { MdDashboard, MdImage, MdShowChart, MdCode, MdExtension, MdNotes, MdTune } from 'react-icons/md';
 import { Button } from '@headlessui/react';
@@ -93,6 +93,12 @@ export default function JobPage({ params }: { params: { jobID: string } }) {
   const { job, status, refreshJob } = useJob(jobID, 5000);
   const [pageKey, setPageKey] = useState<PageKey>('overview');
   const [hasPlugin, setHasPlugin] = useState(false);
+
+  // ?tab=samples (etc.) opens that tab, e.g. from the Prompt Library's sample thumbnails
+  useEffect(() => {
+    const tab = new URLSearchParams(window.location.search).get('tab');
+    if (tab && pages.some(p => p.value === tab)) setPageKey(tab as PageKey);
+  }, []);
 
   // poll for plugin.html in the job folder; show the Plugin tab if it exists
   usePollLoop(

@@ -25,6 +25,7 @@ import { useModelArchs } from '@/extensions/modelArchs';
 import {
   useJobDefaults,
   applyJobDefault,
+  blankPerJobFields,
   extractJobDefault,
   oemJobForArch,
   SavedJobDefault,
@@ -113,7 +114,7 @@ export default function TrainingForm() {
     setJobConfig((prev: JobConfig) => {
       let next = arch !== prev.config.process[0].model.arch ? oemJobForArch(modelArchs, prev, arch) : prev;
       if (saved) next = applyJobDefault(next, saved);
-      return next;
+      return blankPerJobFields(next);
     });
     applySavedGpu(saved);
   }, [runId, cloneId, isSettingsLoaded, isModelArchsLoaded, jobDefaults.isLoaded, isGPUInfoLoaded]);
@@ -173,8 +174,9 @@ export default function TrainingForm() {
       setJobConfig((prev: JobConfig) => {
         let updated = prev;
         for (let i = 0; i < prev.config.process[0].datasets.length; i++) {
+          // new jobs start with no dataset picked
           if (prev.config.process[0].datasets[i].folder_path === defaultDatasetPath) {
-            updated = setNestedValue(updated, datasetOptions[0].value, `config.process[0].datasets[${i}].folder_path`);
+            updated = setNestedValue(updated, '', `config.process[0].datasets[${i}].folder_path`);
           }
         }
         return updated;

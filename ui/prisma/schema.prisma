@@ -84,5 +84,6 @@ model SavedPrompt {
   name       String
   text       String
   group      String   @default("")
+  sort_order Int      @default(0)
   created_at DateTime @default(now())
 }

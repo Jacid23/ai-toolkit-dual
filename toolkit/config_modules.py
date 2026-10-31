@@ -95,6 +95,9 @@ class SampleConfig:
         # DUAL BUILD: when set, training samples render through ComfyUI (this named
         # API-format workflow) on ComfyUI's own GPU instead of the internal sampler.
         self.comfy_workflow = kwargs.get('comfy_workflow', None)
+        # DUAL BUILD: on/off switch for the same thing, using the UI's default sample
+        # workflow (Settings); comfy_workflow, when set, still picks a specific one.
+        self.comfy_sample: bool = kwargs.get('comfy_sample', False)
         self.sample_every: int = kwargs.get('sample_every', 100)
         self.sample_start_step: int = kwargs.get('sample_start_step', 0)
         # explicit list of steps to sample at; if non-empty it OVERRIDES

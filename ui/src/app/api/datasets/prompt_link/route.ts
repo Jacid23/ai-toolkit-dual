@@ -3,6 +3,7 @@ import fs from 'fs';
 import path from 'path';
 import prisma from '@/server/prisma';
 import { getDatasetsRoot } from '@/server/settings';
+import { promptOrderBy } from '@/server/promptLinks';
 
 // DUAL BUILD: link a dataset to a prompt group so New Job auto-fills its sample
 // prompts. The link lives in a .aitk_prompts.json inside the dataset folder, so
@@ -31,7 +32,7 @@ export async function GET(request: NextRequest) {
   }
   let prompts: { name: string; text: string }[] = [];
   if (group) {
-    const rows = await prisma.savedPrompt.findMany({ where: { group } as any, orderBy: { created_at: 'asc' } });
+    const rows = await prisma.savedPrompt.findMany({ where: { group } as any, orderBy: promptOrderBy });
     prompts = rows.map((r: any) => ({ name: r.name, text: r.text }));
   }
   return NextResponse.json({ group, prompts });

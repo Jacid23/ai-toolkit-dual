@@ -342,12 +342,29 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 set_attr(self.save_config, 'save_schedule', as_steps(updates['save_schedule']))
             if 'steps' in updates:
                 set_attr(self.train_config, 'steps', int(updates['steps']))
+                pb = getattr(self, 'progress_bar', None)
+                if pb is not None and hasattr(pb, 'total'):
+                    try:
+                        pb.total = int(updates['steps'])
+                    except Exception:
+                        pass
             if 'lr' in updates:
                 opt = getattr(self, 'optimizer', None)
                 if opt is not None and hasattr(opt, 'param_groups'):
                     for g in opt.param_groups:
                         g['lr'] = float(updates['lr'])
                     applied.append('lr')
+
+            if 'steps' in applied or 'save_schedule' in applied:
+                persist = getattr(self, 'persist_live_train_steps', None)
+                if persist is not None:
+                    try:
+                        persist(
+                            self.train_config.steps,
+                            updates['save_schedule'] if 'save_schedule' in applied else None,
+                        )
+                    except Exception as e:
+                        print_acc(f"persist live steps error (ignored): {e}")
 
             try:
                 os.remove(path)
@@ -2684,7 +2701,15 @@ class BaseSDTrainProcess(BaseTrainProcess):
         start_step_num = self.step_num
         did_first_flush = False
         flush_next = False
-        for step in range(start_step_num, self.train_config.steps):
+        # DUAL BUILD: re-read the step total each step so a live "+1 checkpoint"
+        # (queued steps update) extends the run instead of ending at the old total
+        def _live_steps(start):
+            s = start
+            while s < self.train_config.steps:
+                yield s
+                s += 1
+
+        for step in _live_steps(start_step_num):
             if self.train_config.do_paramiter_swapping:
                 self.optimizer.optimizer.swap_paramiters()
             self.timer.start('train_loop')

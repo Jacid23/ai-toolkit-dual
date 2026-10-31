@@ -6,6 +6,13 @@ import prisma from './prisma';
 // the trainer/worker write, which is what we want on a local disk. Users on
 // setups where WAL can't work (e.g. db on a network filesystem) can override
 // with AI_TOOLKIT_DB_JOURNAL_MODE=DELETE (or any other valid sqlite mode).
+// The trainer POSTs back to the UI (comfy_sample), and the UI port differs per launch
+// script (start 8675, start_dual 8676), so the script passes it in; startJob reads it.
+const uiPortArg = process.argv.indexOf('--ui-port');
+if (uiPortArg !== -1 && process.argv[uiPortArg + 1] && !process.env.AITK_UI_PORT) {
+  process.env.AITK_UI_PORT = process.argv[uiPortArg + 1];
+}
+
 const DEFAULT_JOURNAL_MODE = 'WAL';
 const VALID_JOURNAL_MODES = ['DELETE', 'TRUNCATE', 'PERSIST', 'MEMORY', 'WAL', 'OFF'];
 

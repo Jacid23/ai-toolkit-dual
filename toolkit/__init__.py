@@ -22,3 +22,9 @@ def force_hf_hub_progress_bars():
 
 
 force_hf_hub_progress_bars()
+
+
+# DUAL BUILD: hub models load from / download into MODELS_PATH/hf, never the HF cache
+from toolkit.hf_local import install as _install_hf_local
+
+_install_hf_local()

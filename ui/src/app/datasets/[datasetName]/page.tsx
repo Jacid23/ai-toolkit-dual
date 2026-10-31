@@ -16,6 +16,7 @@ import AutoCaptionButton from '@/components/AutoCaptionButton';
 import DatasetActionBar from '@/components/DatasetActionBar';
 import CaptionMonitor from '@/components/CaptionMonitor';
 import { CreatableSelectInput } from '@/components/formInputs';
+import DatasetPromptGroup from '@/components/DatasetPromptLink';
 
 export default function DatasetPage({ params }: { params: { datasetName: string } }) {
   const [imgList, setImgList] = useState<{ img_path: string }[]>([]);
@@ -133,6 +134,7 @@ export default function DatasetPage({ params }: { params: { datasetName: string 
         </div>
         <div className="flex-1"></div>
         <div className="flex-shrink-0 flex items-center gap-1 sm:gap-2">
+          <DatasetPromptGroup datasetName={datasetName} />
           <div className="flex items-center gap-1">
             <label className="text-xs text-gray-400 hidden sm:inline whitespace-nowrap">Caption ext</label>
             <CreatableSelectInput

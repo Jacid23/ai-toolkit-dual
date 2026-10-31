@@ -5,7 +5,8 @@ import GPUWidget from '@/components/GPUWidget';
 import CPUWidget from '@/components/CPUWidget';
 import FilesWidget from '@/components/FilesWidget';
 import { getTotalSteps } from '@/utils/jobs';
-import { Cpu, HardDrive, Info, Gauge } from 'lucide-react';
+import { Cpu, HardDrive, Info, Gauge, Plus } from 'lucide-react';
+import { apiClient } from '@/utils/api';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import useJobLog from '@/hooks/useJobLog';
 
@@ -27,8 +28,43 @@ export default function JobOverview({ job }: JobOverviewProps) {
   console.log('job.gpu_ids', job.gpu_ids);
   const { gpuList, isGPUInfoLoaded } = useGPUInfo(gpuIds, 5000);
   const { cpuInfo, isCPUInfoLoaded } = useCPUInfo(5000);
-  const totalSteps = getTotalSteps(job);
+  // +1 checkpoint. A running job queues it like Live Edit (shown until the trainer applies it
+  // at the next save); otherwise the saved total changes and shows right away.
+  const [addedTotal, setAddedTotal] = useState<number | null>(null);
+  const [queuedTotal, setQueuedTotal] = useState<number | null>(null);
+  const [adding, setAdding] = useState(false);
+  const [addMsg, setAddMsg] = useState<string | null>(null);
+  const jobTotal = getTotalSteps(job);
+  useEffect(() => {
+    if (addedTotal !== null && jobTotal >= addedTotal) setAddedTotal(null);
+  }, [jobTotal, addedTotal]);
+  useEffect(() => {
+    if (job.status !== 'running') {
+      setQueuedTotal(null);
+      return;
+    }
+    apiClient
+      .get(`/api/jobs/${job.id}/queue_updates`)
+      .then(r => setQueuedTotal(r.data?.pending && r.data.updates?.steps ? Number(r.data.updates.steps) : null))
+      .catch(() => {});
+  }, [job.id, job.status, job.step, jobTotal]);
+  const totalSteps = addedTotal ?? jobTotal;
   const progress = (job.step / totalSteps) * 100;
+  const canAddCheckpoint = (job.job_type || 'train') === 'train' && !(job.stop && job.status === 'running');
+
+  const handleAddCheckpoint = async () => {
+    setAdding(true);
+    setAddMsg(null);
+    try {
+      const r = await apiClient.post(`/api/jobs/${job.id}/add_checkpoint`);
+      if (r.data.queued) setQueuedTotal(r.data.steps);
+      else setAddedTotal(r.data.steps);
+    } catch (e: any) {
+      setAddMsg(e?.response?.data?.error || 'Failed to add a checkpoint');
+    } finally {
+      setAdding(false);
+    }
+  };
   const isStopping = job.stop && job.status === 'running';
 
   const logLines: string[] = useMemo(() => {
@@ -102,8 +138,24 @@ export default function JobOverview({ job }: JobOverviewProps) {
             <div className="space-y-2">
               <div className="flex items-center justify-between text-sm">
                 <span className="text-gray-400">Progress</span>
-                <span className="text-gray-200">
+                <span className="flex items-center gap-2 text-gray-200">
+                  {addMsg && <span className="text-xs text-rose-400">{addMsg}</span>}
                   Step {job.step} of {totalSteps}
+                  {queuedTotal !== null && queuedTotal !== totalSteps && (
+                    <span className="text-xs text-amber-400" title="Queued like a Live Edit">
+                      → {queuedTotal} at next save
+                    </span>
+                  )}
+                  {canAddCheckpoint && (
+                    <button
+                      onClick={handleAddCheckpoint}
+                      disabled={adding}
+                      title="Add one more checkpoint (one save interval of steps)"
+                      className="flex items-center gap-1 px-2 py-0.5 text-xs rounded-md bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-300 disabled:opacity-50"
+                    >
+                      <Plus className="w-3 h-3" /> 1 checkpoint
+                    </button>
+                  )}
                 </span>
               </div>
               <div className="w-full bg-gray-800 rounded-full h-2">

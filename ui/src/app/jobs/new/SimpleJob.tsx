@@ -36,8 +36,9 @@ import { isMac } from '@/helpers/basic';
 import { gpuSelectOptions, isSplitSelection } from '@/utils/dualGpu';
 import TextEncoderSelect, { supportsTextEncoderSelect } from '@/components/TextEncoderSelect';
 import VaeSelect from '@/components/VaeSelect';
-import DatasetPromptLink from '@/components/DatasetPromptLink';
-import ComfySampleSelect from '@/components/ComfySampleSelect';
+import { DatasetPromptAutoLoad } from '@/components/DatasetPromptLink';
+import ComfySampleToggle from '@/components/ComfySampleSelect';
+import ModelDownloadButton from '@/components/ModelDownloadButton';
 
 type Props = {
   jobConfig: JobConfig;
@@ -407,6 +408,12 @@ export default function SimpleJob({
               placeholder=""
               required
             />
+            {!liveEdit && (
+              <ModelDownloadButton
+                arch={jobConfig.config.process[0].model.arch}
+                nameOrPath={jobConfig.config.process[0].model.name_or_path}
+              />
+            )}
             {modelArch?.additionalSections?.includes('model.model_kwargs.instruction') && (
               <TextAreaInput
                 label="LLM Prompt"
@@ -1457,17 +1464,15 @@ export default function SimpleJob({
                         options={datasetOptions}
                       />
                       {i === 0 && (
-                        <div className="pt-2">
-                          <DatasetPromptLink
-                            folderPath={dataset.folder_path}
-                            onLoadPrompts={prompts =>
-                              setJobConfig(
-                                prompts.map(p => ({ prompt: p.text })),
-                                `config.process[0].sample.samples`,
-                              )
-                            }
-                          />
-                        </div>
+                        <DatasetPromptAutoLoad
+                          folderPath={dataset.folder_path}
+                          onLoadPrompts={prompts =>
+                            setJobConfig(
+                              prompts.map(p => ({ prompt: p.text })),
+                              `config.process[0].sample.samples`,
+                            )
+                          }
+                        />
                       )}
                       {modelArch?.additionalSections?.includes('datasets.control_path') && (
                         <SelectInput
@@ -1747,9 +1752,16 @@ export default function SimpleJob({
         <div>
           <Card title="Sample">
             <div className="pb-3">
-              <ComfySampleSelect
-                value={jobConfig.config.process[0].sample.comfy_workflow}
-                onChange={value => setJobConfig(value, 'config.process[0].sample.comfy_workflow')}
+              <ComfySampleToggle
+                checked={!!(jobConfig.config.process[0].sample.comfy_sample || jobConfig.config.process[0].sample.comfy_workflow)}
+                onChange={value =>
+                  setJobConfig(
+                    { ...jobConfig.config.process[0].sample, comfy_sample: value, comfy_workflow: undefined },
+                    'config.process[0].sample',
+                  )
+                }
+                settings={jobConfig.config.process[0].sample.comfy}
+                onSettingsChange={value => setJobConfig(value, 'config.process[0].sample.comfy')}
               />
             </div>
             <div className={sampleTopStyleClass}>
@@ -1773,6 +1785,8 @@ export default function SimpleJob({
                 />
                 {!isLlmModel && (
                   <>
+                    {/* internal sampler only; ComfyUI uses its own sampler/scheduler above */}
+                    {!(jobConfig.config.process[0].sample.comfy_sample || jobConfig.config.process[0].sample.comfy_workflow) && (
                     <SelectInput
                       label="Sampler"
                       className="pt-2"
@@ -1783,6 +1797,7 @@ export default function SimpleJob({
                         { value: 'ddpm', label: 'DDPM' },
                       ]}
                     />
+                    )}
                     <NumberInput
                       label="Guidance Scale"
                       value={jobConfig.config.process[0].sample.guidance_scale}

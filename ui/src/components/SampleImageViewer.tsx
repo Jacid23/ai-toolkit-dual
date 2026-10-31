@@ -3,7 +3,7 @@ import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { Dialog, DialogBackdrop, DialogPanel } from '@headlessui/react';
 import { SampleConfig, SampleItem } from '@/types';
-import { Cog, SquareDashed } from 'lucide-react';
+import { Cog, RefreshCw, SquareDashed } from 'lucide-react';
 import classNames from 'classnames';
 import { Menu, MenuButton, MenuItem, MenuItems } from '@headlessui/react';
 import { openConfirm } from './ConfirmModal';
@@ -20,6 +20,10 @@ interface Props {
   sampleConfig: SampleConfig | null;
   onChange: (nextPath: string | null) => void; // parent setter
   refreshSampleImages?: () => void;
+  jobId?: string; // enables Regenerate (DUAL BUILD: re-render on ComfyUI through the job's regen queue)
+  regenState?: 'queued' | 'rendering' | null; // this image's slot in the regen queue
+  regenError?: string | null;
+  onRegenerate?: (body: { items: { step: number; idx: number }[] } | { step: number }) => Promise<void> | void;
 }
 
 export default function SampleImageViewer({
@@ -29,6 +33,10 @@ export default function SampleImageViewer({
   sampleConfig,
   onChange,
   refreshSampleImages,
+  jobId,
+  regenState = null,
+  regenError = null,
+  onRegenerate,
 }: Props) {
   const [mounted, setMounted] = useState(false);
   const [isOpen, setIsOpen] = useState(Boolean(imgPath));
@@ -151,6 +159,17 @@ export default function SampleImageViewer({
       },
     });
   }, [imgPath, onChange, refreshSampleImages]);
+
+  // DUAL BUILD: queue this image (or its whole step) for a re-render on ComfyUI with the job's
+  // current prompts and sample workflow; the grid swaps the new image in when it is saved
+  const handleRegenerate = useCallback(
+    (wholeStep: boolean) => {
+      if (!jobId || !imgPath || !onRegenerate) return;
+      const { step, promptIdx } = imgInfo;
+      onRegenerate(wholeStep ? { step } : { items: [{ step, idx: promptIdx }] });
+    },
+    [jobId, imgPath, imgInfo, onRegenerate],
+  );
 
   const sampleItem = useMemo<SampleItem | null>(() => {
     if (!sampleConfig) return null;
@@ -425,6 +444,32 @@ export default function SampleImageViewer({
                       title={`Control image ${idx + 1}`}
                     />
                   ))}
+                </div>
+              )}
+
+              {jobId && onRegenerate && imgPath && !isText(imgPath) && !isAudio(imgPath) && !isVideo(imgPath) && (
+                <div className="mr-4 flex flex-col items-end gap-0.5">
+                  <div className="flex items-center gap-1">
+                    <button
+                      type="button"
+                      onClick={() => handleRegenerate(false)}
+                      disabled={regenState !== null}
+                      title="Re-render this image on ComfyUI with the job's current prompt and sample workflow (replaces it when done)"
+                      className="inline-flex items-center gap-1.5 rounded-md bg-gray-700 hover:bg-gray-600 px-2.5 py-1 text-xs text-gray-100 disabled:opacity-60"
+                    >
+                      <RefreshCw className={classNames('w-3.5 h-3.5', regenState === 'rendering' && 'animate-spin')} />
+                      {regenState === 'rendering' ? 'Rendering…' : regenState === 'queued' ? 'Queued' : 'Regenerate'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleRegenerate(true)}
+                      title="Queue every prompt of this step"
+                      className="rounded-md bg-gray-800 hover:bg-gray-700 px-2 py-1 text-xs text-gray-300"
+                    >
+                      Whole step
+                    </button>
+                  </div>
+                  {regenError && <span className="text-[11px] text-red-400 max-w-[260px] text-right">{regenError}</span>}
                 </div>
               )}
 

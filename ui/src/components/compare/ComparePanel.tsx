@@ -1,8 +1,10 @@
 'use client';
+import { useEffect, useRef, useState } from 'react';
 import classNames from 'classnames';
 import { ChevronLeft, ChevronRight, Loader2, Star, X } from 'lucide-react';
 import { CompareData, CompareSettings } from '@/utils/compare';
 import { openPromptLibrary, usePromptLibrary } from '@/components/PromptLibraryModal';
+import ComfyWorkflowImport from '@/components/ComfyWorkflowImport';
 
 export interface ComfyInfo {
   ok: boolean;
@@ -78,12 +80,50 @@ interface Props {
   onCancel: () => void;
 }
 
+const PANEL_WIDTH_KEY = 'compare.panelWidth';
+const PANEL_MIN = 260;
+const PANEL_MAX = 800;
+
 export default function ComparePanel(p: Props) {
   const { data, setSettings } = p;
   const s = data.settings;
   const { library, save, remove } = usePromptLibrary();
   const libId = (t: string) => library.find(l => l.text === t)?.id;
   const num = (v: string) => (v === '' ? 0 : Number(v));
+
+  // drag the panel's left edge to resize it; the width is remembered in this browser
+  const [width, setWidth] = useState(340);
+  const drag = useRef<{ x: number; w: number } | null>(null);
+  useEffect(() => {
+    try {
+      const w = Number(localStorage.getItem(PANEL_WIDTH_KEY));
+      if (w >= PANEL_MIN && w <= PANEL_MAX) setWidth(w);
+    } catch {}
+  }, []);
+  const startResize = (e: React.PointerEvent) => {
+    e.preventDefault();
+    drag.current = { x: e.clientX, w: width };
+    let last = width;
+    const move = (ev: PointerEvent) => {
+      if (!drag.current) return;
+      last = Math.min(PANEL_MAX, Math.max(PANEL_MIN, drag.current.w + drag.current.x - ev.clientX));
+      setWidth(last);
+    };
+    const up = () => {
+      drag.current = null;
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', up);
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+      try {
+        localStorage.setItem(PANEL_WIDTH_KEY, String(last));
+      } catch {}
+    };
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+  };
 
   if (p.folded) {
     return (
@@ -102,7 +142,20 @@ export default function ComparePanel(p: Props) {
   }
 
   return (
-    <aside className="w-[340px] shrink-0 border-l border-gray-800 bg-gray-900 overflow-y-auto flex flex-col">
+    // the handle sits outside the scrolling aside so it stays put while the panel scrolls
+    <div style={{ width }} className="relative shrink-0 flex">
+      <div
+        onPointerDown={startResize}
+        onDoubleClick={() => {
+          setWidth(340);
+          try {
+            localStorage.removeItem(PANEL_WIDTH_KEY);
+          } catch {}
+        }}
+        title="Drag to resize · double-click to reset"
+        className="absolute left-0 top-0 bottom-0 w-1.5 -ml-px z-20 cursor-col-resize hover:bg-blue-500/40 active:bg-blue-500/60"
+      />
+      <aside className="flex-1 min-w-0 border-l border-gray-800 bg-gray-900 overflow-y-auto flex flex-col">
       <div className="sticky top-0 z-10 flex items-center gap-2 pl-4 pr-3 py-2.5 bg-gray-900 border-b border-gray-800">
         <b className="text-sm">Sample settings</b>
         <div className="flex-1" />
@@ -199,6 +252,7 @@ export default function ComparePanel(p: Props) {
               ))}
           </select>
           {p.comfy?.workflowError && <div className="text-xs text-red-400 mt-1">{p.comfy.workflowError}</div>}
+          <ComfyWorkflowImport className="mt-1.5" onImported={p.onWorkflowChange} />
         </div>
         {p.comfy?.options && (
           <>
@@ -336,6 +390,7 @@ export default function ComparePanel(p: Props) {
         </div>
         <div className="text-[11px] text-gray-400 mt-1 truncate">{p.progressText}</div>
       </div>
-    </aside>
+      </aside>
+    </div>
   );
 }

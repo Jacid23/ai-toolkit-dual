@@ -463,7 +463,7 @@ export async function comfyLoraName(loraClass: string, loraPath: string): Promis
 export async function buildPrompt(
   source: ApiPrompt,
   map: WorkflowMap,
-  cell: { loraPath: string; prompt: string },
+  cell: { loraPath: string | null; prompt: string },
   s: CompareSettings,
 ): Promise<ApiPrompt> {
   const keep = new Set(map.keep);
@@ -472,7 +472,29 @@ export async function buildPrompt(
 
   const lora = api[map.lora].inputs;
   delete lora.lora_stack;
-  if (map.loraClass === LM_LORA) {
+  if (cell.loraPath === null) {
+    // base model, no LoRA (training baseline before the first save): wire the loader's
+    // MODEL/CLIP consumers straight to what feeds the loader
+    const outTypes: string[] = (await objectInfo(map.loraClass))?.output ?? ['MODEL', 'CLIP'];
+    const passInput: Record<string, string> = { MODEL: 'model', CLIP: 'clip' };
+    for (const n of Object.values(api)) {
+      for (const [k, v] of Object.entries(n.inputs)) {
+        if (!isLink(v) || v[0] !== map.lora) continue;
+        const src = lora[passInput[outTypes[v[1]]]];
+        if (isLink(src)) n.inputs[k] = src;
+      }
+    }
+    const stillUsed = Object.values(api).some(n => Object.values(n.inputs).some(v => isLink(v) && v[0] === map.lora));
+    if (!stillUsed) delete api[map.lora];
+    else if (map.loraClass === LM_LORA) {
+      lora.loras = { __value__: [] };
+      lora.text = '';
+    } else {
+      // keep the workflow's own (valid) lora_name, applied at zero strength
+      lora.strength_model = 0;
+      if ('strength_clip' in lora) lora.strength_clip = 0;
+    }
+  } else if (map.loraClass === LM_LORA) {
     // LoRA Manager loads from its "loras" list; an absolute path that exists is always accepted,
     // so checkpoints a running training just saved work before the library rescans
     lora.loras = { __value__: [{ name: cell.loraPath, strength: s.strength, clipStrength: s.strength, active: true }] };

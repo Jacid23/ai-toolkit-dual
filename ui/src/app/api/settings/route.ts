@@ -38,7 +38,16 @@ export async function GET() {
 export async function POST(request: Request) {
   try {
     const body = await request.json();
-    const { HF_TOKEN, TRAINING_FOLDER, DATASETS_FOLDER, MODELS_PATH, TEXT_ENCODERS_FOLDER, DEFAULT_MODEL_ARCH, COMFY_URL } = body;
+    const {
+      HF_TOKEN,
+      TRAINING_FOLDER,
+      DATASETS_FOLDER,
+      MODELS_PATH,
+      TEXT_ENCODERS_FOLDER,
+      DEFAULT_MODEL_ARCH,
+      COMFY_URL,
+      COMFY_SAMPLE_WORKFLOW,
+    } = body;
 
     // Upsert both settings
     await Promise.all([
@@ -77,6 +86,12 @@ export async function POST(request: Request) {
         where: { key: 'COMFY_URL' },
         update: { value: COMFY_URL ?? '' },
         create: { key: 'COMFY_URL', value: COMFY_URL ?? '' },
+      }),
+      // dual build: workflow training samples use when a job has "Sample with ComfyUI" on
+      prisma.settings.upsert({
+        where: { key: 'COMFY_SAMPLE_WORKFLOW' },
+        update: { value: COMFY_SAMPLE_WORKFLOW ?? '' },
+        create: { key: 'COMFY_SAMPLE_WORKFLOW', value: COMFY_SAMPLE_WORKFLOW ?? '' },
       }),
     ]);
 

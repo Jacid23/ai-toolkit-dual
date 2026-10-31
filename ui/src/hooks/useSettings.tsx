@@ -11,6 +11,7 @@ export interface Settings {
   TEXT_ENCODERS_FOLDER: string;
   DEFAULT_MODEL_ARCH: string;
   COMFY_URL: string;
+  COMFY_SAMPLE_WORKFLOW: string;
 }
 
 export default function useSettings() {
@@ -22,6 +23,7 @@ export default function useSettings() {
     TEXT_ENCODERS_FOLDER: '',
     DEFAULT_MODEL_ARCH: '',
     COMFY_URL: '',
+    COMFY_SAMPLE_WORKFLOW: '',
   });
   const [isSettingsLoaded, setIsLoaded] = useState(false);
   useEffect(() => {
@@ -38,6 +40,7 @@ export default function useSettings() {
           TEXT_ENCODERS_FOLDER: data.TEXT_ENCODERS_FOLDER || '',
           DEFAULT_MODEL_ARCH: data.DEFAULT_MODEL_ARCH || '',
           COMFY_URL: data.COMFY_URL || '',
+          COMFY_SAMPLE_WORKFLOW: data.COMFY_SAMPLE_WORKFLOW || '',
         });
         setIsLoaded(true);
       })
