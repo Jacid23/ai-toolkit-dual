@@ -1,13 +1,19 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { Plus, Trash2, Save, X, Search } from 'lucide-react';
+import { Plus, Trash2, Save, X, Search, ChevronRight } from 'lucide-react';
 import { TopBar } from '@/components/layout';
 import { apiClient } from '@/utils/api';
 import { TextInput, TextAreaInput } from '@/components/formInputs';
+import Card from '@/components/Card';
 import { openConfirm } from '@/components/ConfirmModal';
 
 type SavedPrompt = { id: string; name: string; text: string; group?: string; created_at?: string };
+
+const btnPrimary =
+  'flex items-center gap-1 rounded-md bg-slate-600 hover:bg-slate-500 text-gray-100 px-3 py-1.5 text-sm font-medium disabled:opacity-50';
+const btnGhost =
+  'flex items-center gap-1 rounded-md bg-gray-800 hover:bg-gray-700 text-gray-200 px-3 py-1.5 text-sm';
 
 export default function PromptsPage() {
   const [prompts, setPrompts] = useState<SavedPrompt[]>([]);
@@ -15,6 +21,7 @@ export default function PromptsPage() {
   const [editing, setEditing] = useState<SavedPrompt | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
 
   const load = () =>
     apiClient
@@ -53,6 +60,13 @@ export default function PromptsPage() {
     [prompts],
   );
 
+  const toggleGroup = (g: string) =>
+    setCollapsed(prev => {
+      const next = new Set(prev);
+      next.has(g) ? next.delete(g) : next.add(g);
+      return next;
+    });
+
   const save = async (p: SavedPrompt) => {
     setBusy(true);
     setError(null);
@@ -87,67 +101,76 @@ export default function PromptsPage() {
         <div className="flex items-center gap-3 w-full">
           <h1 className="text-lg font-medium whitespace-nowrap">Prompt Library</h1>
           <div className="relative ml-auto">
-            <Search className="w-4 h-4 absolute left-2 top-2.5 text-gray-500" />
+            <Search className="w-4 h-4 absolute left-2.5 top-2.5 text-gray-500" />
             <input
               value={search}
               onChange={e => setSearch(e.target.value)}
               placeholder="Search…"
-              className="pl-7 pr-2 py-1.5 text-sm bg-gray-800 rounded border border-gray-700 focus:outline-none focus:border-gray-500"
+              className="pl-8 pr-3 py-1.5 text-sm bg-gray-900 rounded-md border border-gray-700 text-gray-200 focus:outline-none focus:border-slate-500"
             />
           </div>
-          <button
-            type="button"
-            onClick={() => setEditing({ id: '', name: '', text: '', group: '' })}
-            className="flex items-center gap-1 bg-green-700 hover:bg-green-600 text-white rounded px-3 py-1.5 text-sm"
-          >
+          <button type="button" onClick={() => setEditing({ id: '', name: '', text: '', group: '' })} className={btnPrimary}>
             <Plus className="w-4 h-4" /> New
           </button>
         </div>
       </TopBar>
 
-      <div className="pt-20 px-6 pb-6 h-screen flex gap-6">
-        {/* LEFT: grouped title list */}
-        <div className="w-72 flex-shrink-0 overflow-y-auto border-r border-gray-800 pr-3">
-          {groups.length === 0 && <p className="text-gray-500 text-sm mt-2">No prompts yet.</p>}
-          {groups.map(([g, items]) => (
-            <div key={g} className="mb-4">
-              <h2 className="text-[11px] uppercase tracking-wide text-gray-400 mb-1 px-1">
-                {g} <span className="opacity-50">({items.length})</span>
-              </h2>
-              <div className="space-y-0.5">
-                {items.map(p => (
+      <div className="pt-20 px-6 pb-6 h-screen flex gap-5">
+        {/* LEFT: collapsible groups */}
+        <div className="w-72 flex-shrink-0 overflow-y-auto">
+          <section className="px-3 pb-3 pt-3 bg-gray-900 rounded-lg">
+            {groups.length === 0 && <p className="text-gray-500 text-sm px-1">No prompts yet.</p>}
+            {groups.map(([g, items]) => {
+              const isOpen = !collapsed.has(g);
+              return (
+                <div key={g} className="mb-1">
                   <button
-                    key={p.id}
                     type="button"
-                    onClick={() => setEditing(p)}
-                    className={`w-full text-left px-2 py-1.5 rounded text-sm truncate ${
-                      editing?.id === p.id
-                        ? 'bg-blue-900/40 text-white'
-                        : 'text-gray-200 hover:bg-gray-800'
-                    }`}
-                    title={p.name}
+                    onClick={() => toggleGroup(g)}
+                    className="w-full flex items-center gap-1 px-1 py-1 text-[11px] font-semibold uppercase tracking-wide text-gray-400 hover:text-gray-200"
                   >
-                    {p.name}
+                    <ChevronRight className={`w-3.5 h-3.5 transition-transform ${isOpen ? 'rotate-90' : ''}`} />
+                    <span className="truncate">{g}</span>
+                    <span className="opacity-50 ml-auto">{items.length}</span>
                   </button>
-                ))}
-              </div>
-            </div>
-          ))}
+                  {isOpen && (
+                    <div className="space-y-0.5 pl-1">
+                      {items.map(p => (
+                        <button
+                          key={p.id}
+                          type="button"
+                          onClick={() => setEditing(p)}
+                          className={`w-full text-left px-2 py-1.5 rounded-md text-sm truncate ${
+                            editing?.id === p.id ? 'bg-slate-700 text-white' : 'text-gray-300 hover:bg-gray-800'
+                          }`}
+                          title={p.name}
+                        >
+                          {p.name}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </section>
         </div>
 
         {/* RIGHT: editor */}
         <div className="flex-1 min-w-0 overflow-y-auto">
           {error && <p className="text-red-400 text-sm mb-3">{error}</p>}
           {editing ? (
-            <PromptEditor
-              key={editing.id || 'new'}
-              prompt={editing}
-              groups={allGroups}
-              busy={busy}
-              onCancel={() => setEditing(null)}
-              onSave={save}
-              onDelete={editing.id ? () => del(editing) : undefined}
-            />
+            <Card title={editing.id ? 'Edit Prompt' : 'New Prompt'}>
+              <PromptEditor
+                key={editing.id || 'new'}
+                prompt={editing}
+                groups={allGroups}
+                busy={busy}
+                onCancel={() => setEditing(null)}
+                onSave={save}
+                onDelete={editing.id ? () => del(editing) : undefined}
+              />
+            </Card>
           ) : (
             <div className="text-gray-500 text-sm mt-8 text-center">
               Select a prompt on the left to edit, or click <span className="text-gray-300">New</span>.
@@ -180,18 +203,6 @@ function PromptEditor({
 
   return (
     <div className="max-w-2xl">
-      <div className="flex items-center justify-between mb-3">
-        <div className="text-sm font-medium">{prompt.id ? 'Edit prompt' : 'New prompt'}</div>
-        {onDelete && (
-          <button
-            type="button"
-            onClick={onDelete}
-            className="flex items-center gap-1 text-gray-400 hover:text-red-400 text-xs"
-          >
-            <Trash2 className="w-4 h-4" /> Delete
-          </button>
-        )}
-      </div>
       <TextInput label="Title" value={name} onChange={(v: string) => setName(v)} placeholder="eg. Beach portrait" />
       <div className="pt-2">
         <TextInput
@@ -207,7 +218,7 @@ function PromptEditor({
                 key={g}
                 type="button"
                 onClick={() => setGroup(g)}
-                className="text-xs bg-gray-700 hover:bg-gray-600 rounded px-2 py-0.5"
+                className="text-xs bg-gray-800 hover:bg-gray-700 rounded px-2 py-0.5 text-gray-300"
               >
                 {g}
               </button>
@@ -218,22 +229,18 @@ function PromptEditor({
       <div className="pt-2">
         <TextAreaInput label="Prompt" value={text} onChange={(v: string) => setText(v)} rows={10} />
       </div>
-      <div className="flex gap-2 mt-3">
-        <button
-          type="button"
-          disabled={busy || !text.trim()}
-          onClick={() => onSave({ ...prompt, name, group, text })}
-          className="flex items-center gap-1 bg-green-700 hover:bg-green-600 text-white rounded px-3 py-1.5 text-sm disabled:opacity-50"
-        >
+      <div className="flex gap-2 mt-4">
+        <button type="button" disabled={busy || !text.trim()} onClick={() => onSave({ ...prompt, name, group, text })} className={btnPrimary}>
           <Save className="w-4 h-4" /> Save
         </button>
-        <button
-          type="button"
-          onClick={onCancel}
-          className="flex items-center gap-1 bg-gray-700 hover:bg-gray-600 text-white rounded px-3 py-1.5 text-sm"
-        >
+        <button type="button" onClick={onCancel} className={btnGhost}>
           <X className="w-4 h-4" /> Cancel
         </button>
+        {onDelete && (
+          <button type="button" onClick={onDelete} className="flex items-center gap-1 ml-auto text-gray-400 hover:text-red-400 text-sm">
+            <Trash2 className="w-4 h-4" /> Delete
+          </button>
+        )}
       </div>
     </div>
   );
