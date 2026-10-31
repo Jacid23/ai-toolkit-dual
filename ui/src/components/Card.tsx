@@ -12,9 +12,12 @@ interface CardProps {
   onToggle?: (value: boolean) => void;
   // DUAL BUILD: gray out + lock the card's contents (live-edit "can't change this" sections)
   disabled?: boolean;
+  // DUAL BUILD: red border marking a section whose settings can't change on a running job
+  locked?: boolean;
 }
 
-const Card: React.FC<CardProps> = ({ title, children, collapsible, defaultOpen, toggled, onToggle, disabled }) => {
+const Card: React.FC<CardProps> = ({ title, children, collapsible, defaultOpen, toggled, onToggle, disabled, locked }) => {
+  const lockedCls = locked ? ' ring-2 ring-red-500/60' : '';
   const body = disabled ? (
     <fieldset disabled className="opacity-50 pointer-events-none border-0 p-0 m-0 min-w-0 space-y-2">
       {children ?? null}
@@ -85,7 +88,7 @@ const Card: React.FC<CardProps> = ({ title, children, collapsible, defaultOpen, 
     );
   }
   return (
-    <section className="space-y-2 px-4 pb-4 pt-2 bg-gray-900 rounded-lg">
+    <section className={`space-y-2 px-4 pb-4 pt-2 bg-gray-900 rounded-lg${lockedCls}`}>
       {title && <h2 className="text-lg mb-2 font-semibold uppercase text-gray-500">{title}</h2>}
       {body}
     </section>

@@ -333,7 +333,7 @@ export default function SimpleJob({
     <>
       <form
         onSubmit={handleSubmit}
-        className={`space-y-8 relative ${isLoading || liveEdit ? 'pointer-events-none opacity-50' : ''}`}
+        className={`space-y-8 relative ${isLoading ? 'pointer-events-none opacity-50' : ''}`}
       >
         {isLoading && (
           <div className="absolute inset-0 z-50 flex items-center justify-center">
@@ -344,7 +344,7 @@ export default function SimpleJob({
           </div>
         )}
         <div className={topBarClass}>
-          <Card title="Job">
+          <Card title="Job" locked={liveEdit}>
             <TextInput
               label="Training Name"
               value={jobConfig.config.name}
@@ -384,7 +384,7 @@ export default function SimpleJob({
           </Card>
 
           {/* Model Configuration Section */}
-          <Card title="Model">
+          <Card title="Model" locked={liveEdit}>
             <SelectInput
               label="Model Architecture"
               value={jobConfig.config.process[0].model.arch}
@@ -608,7 +608,7 @@ export default function SimpleJob({
             )}
           </Card>
           {supportsTextEncoderSelect(jobConfig.config.process[0].model.arch) ? (
-            <Card title="Text Encoder / VAE">
+            <Card title="Text Encoder / VAE" locked={liveEdit}>
               <TextEncoderSelect
                 value={jobConfig.config.process[0].model.model_kwargs?.text_encoder_path}
                 onChange={value => setJobConfig(value, 'config.process[0].model.model_kwargs.text_encoder_path')}
@@ -626,7 +626,7 @@ export default function SimpleJob({
             </Card>
           ) : null}
           {modelArch?.additionalSections?.includes('model.multistage') && (
-            <Card title="Multistage">
+            <Card title="Multistage" locked={liveEdit}>
               <FormGroup label="Stages to Train" docKey={'model.multistage'}>
                 <Checkbox
                   label="High Noise"
@@ -650,7 +650,7 @@ export default function SimpleJob({
               />
             </Card>
           )}
-          <Card title="Target">
+          <Card title="Target" locked={liveEdit}>
             <SelectInput
               label="Target Type"
               value={jobConfig.config.process[0].network?.type ?? 'lora'}
@@ -766,7 +766,7 @@ export default function SimpleJob({
             )}
           </Card>
           {!disableSections.includes('slider') && (
-            <Card title="Slider">
+            <Card title="Slider" locked={liveEdit}>
               <TextInput
                 label="Target Class"
                 className=""
@@ -1415,7 +1415,7 @@ export default function SimpleJob({
           )}
         </div>
         <div>
-          <Card title="Datasets">
+          <Card title="Datasets" locked={liveEdit}>
             <>
               {jobConfig.config.process[0].datasets.map((dataset, i) => (
                 <div key={i} className="p-4 rounded-lg bg-gray-800 relative">
