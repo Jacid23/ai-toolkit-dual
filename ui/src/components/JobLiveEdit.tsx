@@ -6,12 +6,28 @@ import { NumberInput, TextInput, TextAreaInput } from '@/components/formInputs';
 import { getJobConfig } from '@/utils/jobs';
 import { apiClient } from '@/utils/api';
 import Card from '@/components/Card';
+import SimpleJob from '@/app/jobs/new/SimpleJob';
+import { useNestedState } from '@/utils/hooks';
+import useGPUInfo from '@/hooks/useGPUInfo';
+import { objectCopy } from '@/utils/basic';
+import { migrateJobConfig } from '@/app/jobs/new/jobConfig';
+import { JobConfig } from '@/types';
 
 // DUAL BUILD: "edit on the fly" — queue a few light settings that the trainer
 // applies at its next save point (see apply_pending_updates in BaseSDTrainProcess).
 export default function JobLiveEdit({ job }: { job: Job }) {
   const p = getJobConfig(job).config.process[0];
   const curSchedule: number[] = (p.save?.save_schedule as number[]) || [];
+
+  // read-only clone of the full job form (grayed via liveEdit) for context
+  const { gpuList } = useGPUInfo();
+  const [formConfig, setFormConfig] = useNestedState<JobConfig>(
+    objectCopy(migrateJobConfig(getJobConfig(job) as JobConfig)),
+  );
+  const datasetOptions = ((getJobConfig(job).config.process[0].datasets as any[]) || []).map((d: any) => ({
+    value: d.folder_path,
+    label: (d.folder_path || '').split(/[/\\]/).filter(Boolean).pop() || d.folder_path,
+  }));
 
   const [steps, setSteps] = useState<number | null>(p.train?.steps ?? null);
   const [lr, setLr] = useState<number | null>(p.train?.lr ?? null);
@@ -90,7 +106,8 @@ export default function JobLiveEdit({ job }: { job: Job }) {
   };
 
   return (
-    <div className="max-w-xl">
+    <div className="space-y-6">
+      <div className="max-w-xl">
       <Card title="Edit on the fly">
         {!running && (
           <p className="text-amber-400 text-sm mb-2">
@@ -157,6 +174,26 @@ export default function JobLiveEdit({ job }: { job: Job }) {
         </button>
         {msg && <p className="text-xs text-gray-400 mt-2">{msg}</p>}
       </Card>
+      </div>
+
+      <div>
+        <div className="text-xs uppercase tracking-wide text-gray-500 mb-2 px-1">
+          Full config — read-only (locked while running; edit the fields above to queue changes)
+        </div>
+        <SimpleJob
+          liveEdit
+          jobConfig={formConfig}
+          setJobConfig={setFormConfig}
+          status="idle"
+          handleSubmit={e => e.preventDefault()}
+          runId={job.id}
+          gpuIDs={job.gpu_ids ?? null}
+          setGpuIDs={() => {}}
+          gpuList={gpuList}
+          datasetOptions={datasetOptions}
+          isLoading={false}
+        />
+      </div>
     </div>
   );
 }

@@ -51,6 +51,8 @@ type Props = {
   datasetOptions: any;
   isLoading?: boolean;
   onArchChanged?: (arch: string) => void;
+  // DUAL BUILD: live-edit mode — render the whole form read-only (grayed) for context
+  liveEdit?: boolean;
 };
 
 const isDev = process.env.NODE_ENV === 'development';
@@ -67,6 +69,7 @@ export default function SimpleJob({
   datasetOptions,
   onArchChanged,
   isLoading,
+  liveEdit,
 }: Props) {
   const { archs: modelArchs, groupedModelOptions } = useModelArchs();
 
@@ -330,7 +333,7 @@ export default function SimpleJob({
     <>
       <form
         onSubmit={handleSubmit}
-        className={`space-y-8 relative ${isLoading ? 'pointer-events-none opacity-50' : ''}`}
+        className={`space-y-8 relative ${isLoading || liveEdit ? 'pointer-events-none opacity-50' : ''}`}
       >
         {isLoading && (
           <div className="absolute inset-0 z-50 flex items-center justify-center">

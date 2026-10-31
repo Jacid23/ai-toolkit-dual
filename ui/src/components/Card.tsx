@@ -10,9 +10,18 @@ interface CardProps {
   // when provided, the card is opened/closed by a toggle switch on the right instead of a chevron
   toggled?: boolean;
   onToggle?: (value: boolean) => void;
+  // DUAL BUILD: gray out + lock the card's contents (live-edit "can't change this" sections)
+  disabled?: boolean;
 }
 
-const Card: React.FC<CardProps> = ({ title, children, collapsible, defaultOpen, toggled, onToggle }) => {
+const Card: React.FC<CardProps> = ({ title, children, collapsible, defaultOpen, toggled, onToggle, disabled }) => {
+  const body = disabled ? (
+    <fieldset disabled className="opacity-50 pointer-events-none border-0 p-0 m-0 min-w-0 space-y-2">
+      {children ?? null}
+    </fieldset>
+  ) : (
+    (children ?? null)
+  );
   if (onToggle) {
     return (
       <section className="space-y-2 px-4 pb-2 pt-2 bg-gray-900 rounded-lg">
@@ -46,7 +55,7 @@ const Card: React.FC<CardProps> = ({ title, children, collapsible, defaultOpen, 
         </div>
         {toggled && (
           <>
-            {children ?? null}
+            {body}
             <div className="pt-2"></div>
           </>
         )}
@@ -68,7 +77,7 @@ const Card: React.FC<CardProps> = ({ title, children, collapsible, defaultOpen, 
               </div>
               <FaChevronDown className={`ml-2 inline-block transition-transform ${open ? 'rotate-180' : ''}`} />
             </DisclosureButton>
-            <DisclosurePanel>{children ?? null}</DisclosurePanel>
+            <DisclosurePanel>{body}</DisclosurePanel>
             {open && <div className="pt-2"></div>}
           </>
         )}
@@ -78,7 +87,7 @@ const Card: React.FC<CardProps> = ({ title, children, collapsible, defaultOpen, 
   return (
     <section className="space-y-2 px-4 pb-4 pt-2 bg-gray-900 rounded-lg">
       {title && <h2 className="text-lg mb-2 font-semibold uppercase text-gray-500">{title}</h2>}
-      {children ?? null}
+      {body}
     </section>
   );
 };
