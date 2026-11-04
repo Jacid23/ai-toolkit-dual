@@ -1,6 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/server/prisma';
-import { analyzeWorkflow, buildPrompt, comfyErrorText, comfyFetch, loadWorkflow, scanRun } from '@/server/compare';
+import {
+  analyzeWorkflow,
+  buildPrompt,
+  comfyErrorText,
+  comfyFetch,
+  comfyServerUrl,
+  loadWorkflow,
+  scanRun,
+  withComfyUrl,
+} from '@/server/compare';
 import { cellKey, CompareData } from '@/utils/compare';
 
 // Queue every image this comparison is missing (or all of them) in ComfyUI. Comfy runs them in
@@ -40,6 +49,14 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     );
     if (!todo.length) return NextResponse.json({ queued: 0 });
 
+    // the comparison's ComfyUI; each cell remembers it so /sync and /cancel ask the same one
+    let server: string;
+    try {
+      server = await comfyServerUrl(s.server);
+    } catch (e: any) {
+      return NextResponse.json({ error: e?.message ?? String(e) }, { status: 400 });
+    }
+    return await withComfyUrl(server, async () => {
     const api = await loadWorkflow(s.workflow);
     const map = await analyzeWorkflow(api);
     const snapshot = JSON.stringify({
@@ -56,6 +73,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       width: s.width,
       height: s.height,
       neg: s.neg,
+      server,
     });
 
     let queued = 0;
@@ -96,6 +114,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       queued++;
     }
     return NextResponse.json({ queued, failed: failed.length, firstError: failed[0] ?? null });
+    });
   } catch (error: any) {
     return NextResponse.json({ error: error?.message ?? 'Failed to queue samples' }, { status: 500 });
   }

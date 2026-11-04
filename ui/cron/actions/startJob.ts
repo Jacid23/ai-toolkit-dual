@@ -3,7 +3,7 @@ import { Job } from '@prisma/client';
 import { spawn, ChildProcess } from 'child_process';
 import path from 'path';
 import fs from 'fs';
-import { TOOLKIT_ROOT, getTrainingFolder, getHFToken, getModelsPath } from '../paths';
+import { TOOLKIT_ROOT, getJobRoot, getHFToken, getModelsPath } from '../paths';
 import { resolveDetachedPythonPath } from '../pythonPath';
 const isWindows = process.platform === 'win32';
 
@@ -182,25 +182,29 @@ const startAndWatchJob = (job: Job) => {
   return new Promise<void>(async (resolve, reject) => {
     const jobID = job.id;
 
-    // setup the training
-    const trainingRoot = await getTrainingFolder();
+    // setup the training: in the job's save location (dual build), else the Training Folder
+    const jobConfig = JSON.parse(job.job_config);
+    const trainingRoot = await getJobRoot(jobConfig);
 
     const trainingFolder = path.join(trainingRoot, job.name);
-    if (!fs.existsSync(trainingFolder)) {
-      fs.mkdirSync(trainingFolder, { recursive: true });
+    // dual build: the job folder holds only LoRAs and thumbnails; the config, logs and pid files
+    // go in <job>\config with the trainer's own (src/server/jobFolders.ts, BaseTrainProcess)
+    const metaFolder = path.join(trainingFolder, 'config');
+    if (!fs.existsSync(metaFolder)) {
+      fs.mkdirSync(metaFolder, { recursive: true });
     }
 
     // make the config file
-    const configPath = path.join(trainingFolder, '.job_config.json');
+    const configPath = path.join(metaFolder, '.job_config.json');
 
     //log to path
-    const logPath = path.join(trainingFolder, 'log.txt');
+    const logPath = path.join(metaFolder, 'log.txt');
 
     try {
       // if the log path exists, move it to a folder called logs and rename it {num}_log.txt, looking for the highest num
       // if the log path does not exist, create it
       if (fs.existsSync(logPath)) {
-        const logsFolder = path.join(trainingFolder, 'logs');
+        const logsFolder = path.join(metaFolder, 'logs');
         if (!fs.existsSync(logsFolder)) {
           fs.mkdirSync(logsFolder, { recursive: true });
         }
@@ -217,8 +221,9 @@ const startAndWatchJob = (job: Job) => {
     }
 
     // update the config dataset path
-    const jobConfig = JSON.parse(job.job_config);
     jobConfig.config.process[0].sqlite_db_path = path.join(TOOLKIT_ROOT, 'aitk_db.db');
+    // the trainer saves to <training_folder>\<name>: the folder made above
+    jobConfig.config.process[0].training_folder = trainingRoot;
     if (job.job_type === 'inference') {
       // the engine publishes engine.json (endpoint + token) and writes its
       // outputs under the job folder, which the UI proxy/file routes know
@@ -227,6 +232,10 @@ const startAndWatchJob = (job: Job) => {
         job_folder: trainingFolder,
       };
     }
+
+    // dual build: the job's id travels with its output folder in this file (a move script keeps it
+    // as config\<name>_job_config.json), so a moved, renamed training is still found as this job
+    jobConfig.aitk_job_id = jobID;
 
     // write the config file
     fs.writeFileSync(configPath, JSON.stringify(jobConfig, null, 2));
@@ -274,7 +283,7 @@ const startAndWatchJob = (job: Job) => {
     const args = [runFilePath, configPath];
 
     // Where the Windows relay reports the job's real pid back to us.
-    const relayPidPath = path.join(trainingFolder, '.job_pid');
+    const relayPidPath = path.join(metaFolder, '.job_pid');
 
     let logFd: number | null = null;
     try {
@@ -372,7 +381,7 @@ const startAndWatchJob = (job: Job) => {
         });
       }
       try {
-        fs.writeFileSync(path.join(trainingFolder, 'pid.txt'), String(pid ?? ''), { flag: 'w' });
+        fs.writeFileSync(path.join(metaFolder, 'pid.txt'), String(pid ?? ''), { flag: 'w' });
       } catch (e) {
         console.error('Error writing pid file:', e);
       }

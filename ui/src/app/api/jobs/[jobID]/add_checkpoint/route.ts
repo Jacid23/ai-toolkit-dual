@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/server/prisma';
 import path from 'path';
 import fs from 'fs';
-import { getTrainingFolder } from '@/server/settings';
+import { jobMetaFolder } from '@/server/jobFolders';
 
 // DUAL BUILD: POST — extend a job by one checkpoint. Raises train.steps by one save interval
 // (or adds the next step to a custom save_schedule at its last spacing). A stopped/finished
@@ -29,7 +29,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
   // A running job is treated as a Live Edit: the change is queued for the trainer (stacking on
   // anything already queued), applies at the next save, and the trainer then writes it back
   // to the saved job. Otherwise the saved config is edited directly.
-  const folder = path.join(await getTrainingFolder(), job.name);
+  const folder = await jobMetaFolder(job);
   const file = path.join(folder, PENDING_FILE);
   let pending: Record<string, any> = {};
   if (running) {

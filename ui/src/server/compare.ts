@@ -3,9 +3,10 @@
 // patches the LoRA, prompt, sampler settings, size and model/TE/VAE into a copy per image.
 import fs from 'fs';
 import path from 'path';
+import { AsyncLocalStorage } from 'async_hooks';
 import YAML from 'yaml';
 import prisma from '@/server/prisma';
-import { getTrainingFolder } from '@/server/settings';
+import { jobOutputFolder } from '@/server/jobFolders';
 import type { CompareRun, CompareSettings, ScannedFile, ScannedRun } from '@/utils/compare';
 
 type RunCfg = Record<string, string | number | null>;
@@ -97,42 +98,8 @@ export function cfgFromJobConfig(jobConfig: any): RunCfg {
   };
 }
 
-const hasLoras = (dir: string) =>
-  fs.promises
-    .readdir(dir)
-    .then(f => f.some(n => n.toLowerCase().endsWith('.safetensors')))
-    .catch(() => false);
-
-// The job's own output folder, or, when its LoRAs were moved one level down (e.g.
-// <training folder>\aitk_outputs\<job name>), that copy.
-export async function jobFolder(job: { name: string; job_config: string }): Promise<string> {
-  let trainingFolder = '';
-  try {
-    trainingFolder = JSON.parse(job.job_config)?.config?.process?.[0]?.training_folder ?? '';
-  } catch {}
-  const roots = Array.from(new Set([trainingFolder, await getTrainingFolder()].filter(Boolean)));
-  const own = path.join(roots[0], job.name);
-  if (await hasLoras(own)) return own;
-  for (const root of roots) {
-    for (const sub of await subfolders(root)) {
-      const candidate = path.join(root, sub, job.name);
-      if (await hasLoras(candidate)) return candidate;
-    }
-  }
-  return own;
-}
-
-// listing the trainings checks every job, so read each training root's subfolders once per 30s
-const subfolderCache = new Map<string, { at: number; dirs: string[] }>();
-async function subfolders(root: string): Promise<string[]> {
-  const hit = subfolderCache.get(root);
-  if (hit && Date.now() - hit.at < 30000) return hit.dirs;
-  const dirs = (await fs.promises.readdir(root, { withFileTypes: true }).catch(() => []))
-    .filter(d => d.isDirectory())
-    .map(d => d.name);
-  subfolderCache.set(root, { at: Date.now(), dirs });
-  return dirs;
-}
+// the job's output folder (its save location or the Training Folder, plus its name)
+export const jobFolder = (job: { name: string; job_config?: string | null }) => jobOutputFolder(job);
 
 export async function scanRun(run: CompareRun): Promise<ScannedRun> {
   const out: ScannedRun = { name: run.name, folder: '', files: [], cfg: null, cfgSource: 'none' };
@@ -181,9 +148,117 @@ export const getCompareDefaults = async () => {
 
 export const DEFAULT_COMFY_URL = 'http://127.0.0.1:8188';
 
-export async function getComfyUrl(): Promise<string> {
+// the main ComfyUI (Settings → ComfyUI Address), unless the call runs inside withComfyUrl()
+const comfyUrlScope = new AsyncLocalStorage<string>();
+
+export async function getMainComfyUrl(): Promise<string> {
   const row = await prisma.settings.findFirst({ where: { key: 'COMFY_URL' } });
   return (row?.value?.trim() || DEFAULT_COMFY_URL).replace(/\/+$/, '');
+}
+
+export async function getComfyUrl(): Promise<string> {
+  return comfyUrlScope.getStore() ?? (await getMainComfyUrl());
+}
+
+// Settings → "Later samples ComfyUI": a second ComfyUI the regen queue can render on instead
+export async function getLaterComfyUrl(): Promise<string | null> {
+  const row = await prisma.settings.findFirst({ where: { key: 'COMFY_LATER_URL' } });
+  return row?.value?.trim() ? row.value.trim().replace(/\/+$/, '') : null;
+}
+
+// A ComfyUI pick: blank / 'main' = the main one (Settings → ComfyUI Address), 'later' = the second
+// one, or an exact address, which must still be one of the two in Settings. No fallback: a pick
+// that isn't set any more is an error, not quietly another ComfyUI.
+export async function comfyServerUrl(pick?: string | null): Promise<string> {
+  const main = await getMainComfyUrl();
+  const later = await getLaterComfyUrl();
+  if (!pick || pick === 'main') return main;
+  if (pick === 'later') {
+    if (!later) throw new Error('No second ComfyUI set (Settings → Second ComfyUI).');
+    return later;
+  }
+  const url = pick.trim().replace(/\/+$/, '');
+  if (url === main || url === later) return url;
+  throw new Error(`ComfyUI ${url.replace(/^https?:\/\//, '')} is no longer set in Settings.`);
+}
+
+// What tells the two ComfyUIs apart is their GPUs: name each by its cards from /system_stats,
+// e.g. "2× 5090" or "3090". The last name seen is kept in the DB (COMFY_SERVER_LABELS), so a
+// ComfyUI that isn't running still shows by its cards; host:port only for one never seen.
+// Cached per URL for a minute.
+const labelCache = new Map<string, { at: number; label: string }>();
+const LABELS_KEY = 'COMFY_SERVER_LABELS';
+async function storedLabels(): Promise<Record<string, string>> {
+  try {
+    return JSON.parse((await prisma.settings.findFirst({ where: { key: LABELS_KEY } }))?.value || '{}') ?? {};
+  } catch {
+    return {};
+  }
+}
+export async function serverLabel(url: string | null | undefined): Promise<string | null> {
+  if (!url) return null;
+  const hit = labelCache.get(url);
+  if (hit && Date.now() - hit.at < 60000) return hit.label;
+  const stored = await storedLabels();
+  let label = stored[url] || url.replace(/^https?:\/\//, '');
+  try {
+    const stats = await withComfyUrl(url, () => comfyJson('/system_stats', { timeoutMs: 3000 }));
+    const names: string[] = (stats?.devices ?? [])
+      .filter((d: any) => /cuda/i.test(d?.type ?? '') || /cuda/i.test(d?.name ?? ''))
+      .map((d: any) => {
+        const n = String(d?.name ?? '');
+        return n.match(/\b(\d{4})\b(\s*Ti)?/i)?.[0].replace(/\s+/g, ' ') ?? n.replace(/^cuda:\d+\s*/i, '').split(':')[0].trim();
+      })
+      .filter(Boolean);
+    const counts = new Map<string, number>();
+    for (const n of names) counts.set(n, (counts.get(n) ?? 0) + 1);
+    if (counts.size) {
+      label = Array.from(counts).map(([n, c]) => (c > 1 ? `${c}× ${n}` : n)).join(' + ');
+      if (stored[url] !== label) {
+        const value = JSON.stringify({ ...stored, [url]: label });
+        await prisma.settings.upsert({ where: { key: LABELS_KEY }, update: { value }, create: { key: LABELS_KEY, value } });
+      }
+    }
+  } catch {}
+  labelCache.set(url, { at: Date.now(), label });
+  return label;
+}
+
+// both ComfyUIs with their GPU names, for the pickers
+export async function comfyServers() {
+  const main = await getMainComfyUrl();
+  const later = await getLaterComfyUrl();
+  const [mainLabel, laterLabel] = await Promise.all([serverLabel(main), serverLabel(later)]);
+  return { main, later, labels: { main: mainLabel ?? main, later: laterLabel } };
+}
+
+// Each ComfyUI has its own sample workflow, and only that one: main = Settings → ComfyUI Sample
+// Workflow, second = Settings → Second ComfyUI Workflow. For the ComfyUI calls are going to;
+// null when that ComfyUI has none set (or isn't one of the two any more).
+export async function tiedWorkflow(): Promise<string | null> {
+  const url = await getComfyUrl();
+  const key =
+    url === (await getMainComfyUrl())
+      ? 'COMFY_SAMPLE_WORKFLOW'
+      : url === (await getLaterComfyUrl())
+        ? 'COMFY_LATER_WORKFLOW'
+        : null;
+  if (!key) return null;
+  return (await prisma.settings.findFirst({ where: { key } }))?.value?.trim() || null;
+}
+
+// the ComfyUI a Compare cell was sent to (stored in its settings snapshot); older cells = main
+export async function cellComfyUrl(settingsJson: string | null | undefined): Promise<string> {
+  try {
+    const url = JSON.parse(settingsJson || '{}')?.server;
+    if (typeof url === 'string' && url) return url;
+  } catch {}
+  return getMainComfyUrl();
+}
+
+// every ComfyUI call made inside fn (awaited or not) goes to url; null/blank = the main one
+export function withComfyUrl<T>(url: string | null | undefined, fn: () => Promise<T>): Promise<T> {
+  return url ? comfyUrlScope.run(url.replace(/\/+$/, ''), fn) : fn();
 }
 
 export async function comfyFetch(pathname: string, init: RequestInit & { timeoutMs?: number } = {}) {
@@ -199,11 +274,13 @@ export async function comfyJson(pathname: string, init: RequestInit & { timeoutM
 
 const objectInfoCache = new Map<string, { at: number; info: any }>();
 export async function objectInfo(classType: string): Promise<any> {
-  const hit = objectInfoCache.get(classType);
+  // per server: two ComfyUIs can have different nodes and model lists
+  const key = `${await getComfyUrl()}|${classType}`;
+  const hit = objectInfoCache.get(key);
   if (hit && Date.now() - hit.at < 60000) return hit.info;
   const json = await comfyJson(`/api/object_info/${encodeURIComponent(classType)}`);
   const info = json?.[classType] ?? null;
-  objectInfoCache.set(classType, { at: Date.now(), info });
+  objectInfoCache.set(key, { at: Date.now(), info });
   return info;
 }
 
@@ -217,7 +294,13 @@ export async function listWorkflows(): Promise<string[]> {
 }
 
 export async function loadWorkflow(name: string): Promise<ApiPrompt> {
-  const json = await comfyJson(`/api/userdata/${encodeURIComponent('workflows/' + name)}`);
+  const file = `/api/userdata/${encodeURIComponent('workflows/' + name)}`;
+  let json: any;
+  try {
+    json = await comfyJson(file);
+  } catch {
+    throw new Error(`"${name}" isn't in ${(await getComfyUrl()).replace(/^https?:\/\//, '')}'s workflows folder.`);
+  }
   if (!isApiWorkflow(json)) {
     throw new Error(
       `"${name}" is a regular workflow save. Compare needs the API format: in ComfyUI use File → Export (API).`,
@@ -519,6 +602,32 @@ export async function buildPrompt(
     if (t && s[field]) api[t.node].inputs[t.input] = s[field];
   }
   return api;
+}
+
+// DUAL BUILD: "Save for BasementUI" takes any folder and an exact file name, so ComfyUI itself can
+// write a training sample straight into the job's samples/ folder under aitk's name: no download,
+// no second copy, nothing lost when aitk restarts or ComfyUI's queue is slow. Points the first
+// saver (one not chained after another) at <folder>/<category>/<name>.webp and drops savers
+// chained after it, which would otherwise write their versions under a "samples" category of
+// their own folders. False when the prompt has no such saver.
+const DIRECT_SAVE_CLASS = 'BasementUISave';
+export function pointSaveAt(api: ApiPrompt, folder: string, category: string, name: string): boolean {
+  const savers = Object.keys(api)
+    .filter(id => api[id].class_type === DIRECT_SAVE_CLASS)
+    .sort((a, b) => parseFloat(a) - parseFloat(b) || a.localeCompare(b));
+  const first = savers.find(id => !isLink(api[id].inputs.meta_info));
+  if (!first) return false;
+  for (const id of savers) if (id !== first && isLink(api[id].inputs.meta_info)) delete api[id];
+  Object.assign(api[first].inputs, {
+    save_folder: folder,
+    category,
+    file_name: name,
+    file_format: 'webp',
+    filename_prefix: '',
+    filename_suffix: '',
+    resize_longest: 'original',
+  });
+  return true;
 }
 
 // Comfy's validation errors come back as { error, node_errors: { id: { errors: [...] } } }

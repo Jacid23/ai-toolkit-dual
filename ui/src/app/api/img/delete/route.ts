@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import fs from 'fs';
 import { getDatasetsRoot, getTrainingFolder } from '@/server/settings';
+import { saveLocationRoots } from '@/server/jobFolders';
 
 const fileExists = (p: string) => fs.promises.access(p).then(() => true).catch(() => false);
 
@@ -12,7 +13,8 @@ export async function POST(request: Request) {
     const trainingPath = await getTrainingFolder();
 
     // make sure the dataset path is in the image path
-    if (!imgPath.startsWith(datasetsPath) && !imgPath.startsWith(trainingPath)) {
+    const roots = [datasetsPath, trainingPath, ...(await saveLocationRoots())];
+    if (!roots.some(r => imgPath.startsWith(r))) {
       return NextResponse.json({ error: 'Invalid image path' }, { status: 400 });
     }
 

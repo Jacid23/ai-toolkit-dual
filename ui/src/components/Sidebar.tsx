@@ -136,8 +136,8 @@ const Sidebar = () => {
       </div>
 
       {/* Social links grid */}
-      <div className="px-1 py-1 border-t border-gray-800">
-        <div className="grid grid-cols-4 gap-4">
+      <div className="px-2 py-1.5 border-t border-gray-800">
+        <div className="grid grid-cols-4 gap-2">
           <a href="https://discord.gg/VXmU2f5WEU" target="_blank" rel="noreferrer" className={socialsBoxClass}>
             <FaDiscord className={socialIconClass} />
           </a>
@@ -159,7 +159,7 @@ const Sidebar = () => {
   return (
     <>
       {/* Desktop sidebar - always visible on md+ */}
-      <div className="hidden md:flex flex-col w-59 bg-gray-900 text-gray-100">{sidebarContent}</div>
+      <div className="hidden md:flex flex-col w-59 shrink-0 overflow-y-auto overflow-x-hidden bg-gray-900 text-gray-100">{sidebarContent}</div>
 
       {/* Mobile overlay sidebar */}
       <div

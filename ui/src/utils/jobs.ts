@@ -50,6 +50,12 @@ export const deleteJob = (jobID: string) => {
   });
 };
 
+// DUAL BUILD: rename a stopped job: its folder, LoRAs, thumbnails and Compare's paths to them
+export const renameJob = async (jobID: string, name: string): Promise<{ name: string; error?: string }> => {
+  const res = await apiClient.post(`/api/jobs/${jobID}/rename`, { name });
+  return res.data;
+};
+
 export const saveJobNow = (jobID: string) => {
   return new Promise<void>((resolve, reject) => {
     apiClient
@@ -174,4 +180,12 @@ export const getSavePoints = (job: Job, totalSteps?: number): number[] => {
     }
   }
   return Array.from(set).sort((a, b) => a - b);
+};
+
+// The step this job saves at next: the next scheduled save, or the save training always ends
+// with once the schedule is used up. null when there's nothing left to save.
+export const getNextSave = (job: Job, totalSteps?: number): number | null => {
+  const total = totalSteps ?? getTotalSteps(job);
+  if (!total || job.step >= total) return null;
+  return getSavePoints(job, total).find(s => s > job.step) ?? total;
 };

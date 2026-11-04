@@ -17,11 +17,24 @@ export default function Settings() {
   const loadComfyWorkflows = () =>
     apiClient
       .get('/api/compare/comfy')
-      .then(r => setComfyWorkflows(r.data?.ok ? (r.data.workflows ?? []) : null))
+      .then(r => {
+        setComfyWorkflows(r.data?.ok ? (r.data.workflows ?? []) : null);
+        setServerLabels(r.data?.servers?.labels ?? {});
+      })
       .catch(() => setComfyWorkflows(null));
+  // each ComfyUI named by its GPUs (from its /system_stats), e.g. "2× 5090" / "3090"
+  const [serverLabels, setServerLabels] = useState<{ main?: string; later?: string | null }>({});
+  // the workflows on the Later Samples ComfyUI (as saved), for the workflow tied to it
+  const [laterWorkflows, setLaterWorkflows] = useState<string[] | null>(null);
+  const loadLaterWorkflows = () =>
+    apiClient
+      .get('/api/compare/comfy', { params: { server: 'later' } })
+      .then(r => setLaterWorkflows(r.data?.ok ? (r.data.workflows ?? []) : null))
+      .catch(() => setLaterWorkflows(null));
 
   useEffect(() => {
     loadComfyWorkflows();
+    loadLaterWorkflows();
   }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -164,9 +177,10 @@ export default function Settings() {
                   />
                 </div>
 
+
                 <div>
                   <label htmlFor="COMFY_URL" className="block text-sm font-medium mb-2">
-                    ComfyUI Address
+                    ComfyUI Address{serverLabels.main ? ` · ${serverLabels.main}` : ''}
                     <div className="text-gray-500 text-sm ml-1">
                       The running ComfyUI that Compare and ComfyUI training samples render on. If blank, it will
                       default to http://127.0.0.1:8188.
@@ -205,9 +219,50 @@ export default function Settings() {
                   />
                   <div className="text-gray-500 text-sm ml-1 mt-1">
                     Jobs with &quot;Sample with ComfyUI&quot; on render their training samples with this API-format
-                    workflow, on ComfyUI&apos;s GPU. Save Settings after changing it.
+                    workflow, on the ComfyUI above. Save Settings after changing it.
                   </div>
                 </div>
+
+                <div>
+                  <label htmlFor="COMFY_LATER_URL" className="block text-sm font-medium mb-2">
+                    Second ComfyUI{serverLabels.later ? ` · ${serverLabels.later}` : ''}
+                    <div className="text-gray-500 text-sm ml-1">
+                      A second ComfyUI the Samples tab and Compare can render on instead, e.g. after training with
+                      &quot;Sample later&quot; on. Renders there use the workflow below. Blank = only the main ComfyUI.
+                    </div>
+                  </label>
+                  <input
+                    type="text"
+                    id="COMFY_LATER_URL"
+                    name="COMFY_LATER_URL"
+                    value={settings.COMFY_LATER_URL}
+                    onChange={handleChange}
+                    className="w-full px-4 py-2 bg-gray-800 border border-gray-700 rounded-lg focus:ring-2 focus:ring-gray-600 focus:border-transparent"
+                    placeholder="http://127.0.0.1:8188"
+                  />
+                </div>
+
+                {settings.COMFY_LATER_URL.trim() && (
+                  <div>
+                    <SelectInput
+                      label={`Second ComfyUI Workflow${serverLabels.later ? ` · ${serverLabels.later}` : ''}`}
+                      value={settings.COMFY_LATER_WORKFLOW}
+                      onChange={value => setSettings(prev => ({ ...prev, COMFY_LATER_WORKFLOW: value }))}
+                      options={[
+                        { value: '', label: 'None' },
+                        ...(laterWorkflows ?? []).map(w => ({ value: w, label: w })),
+                        ...(settings.COMFY_LATER_WORKFLOW && !(laterWorkflows ?? []).includes(settings.COMFY_LATER_WORKFLOW)
+                          ? [{ value: settings.COMFY_LATER_WORKFLOW, label: settings.COMFY_LATER_WORKFLOW }]
+                          : []),
+                      ]}
+                    />
+                    <div className="text-gray-500 text-sm ml-1 mt-1">
+                      {laterWorkflows
+                        ? 'The workflow tied to the second ComfyUI: every render sent there uses it.'
+                        : 'Second ComfyUI not reachable (or its address not saved yet): save Settings, then reload this page to list its workflows.'}
+                    </div>
+                  </div>
+                )}
 
                 <div>
                   <SelectInput

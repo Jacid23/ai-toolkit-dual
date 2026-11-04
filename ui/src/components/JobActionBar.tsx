@@ -1,6 +1,6 @@
 import Link from 'next/link';
 import { useEffect, useRef, useState } from 'react';
-import { Eye, Trash2, Pen, Play, Pause, Cog, X, Copy, Save, OctagonX, Image, Flag } from 'lucide-react';
+import { Eye, Trash2, Pen, Play, Pause, Cog, X, Copy, Save, OctagonX, Image, Flag, TextCursorInput } from 'lucide-react';
 import { LuLoader } from 'react-icons/lu';
 import { Button } from '@headlessui/react';
 import { openConfirm } from '@/components/ConfirmModal';
@@ -14,6 +14,7 @@ import {
   saveJobNow,
   sampleJobNow,
   stopJobAtCheckpoint,
+  renameJob,
 } from '@/utils/jobs';
 import { startQueue } from '@/utils/queue';
 import { Menu, MenuButton, MenuItem, MenuItems } from '@headlessui/react';
@@ -32,7 +33,16 @@ interface JobActionBarProps {
   menuAnchor?: 'bottom' | 'top end';
 }
 
-type PendingAction = 'start' | 'remove' | 'stop' | 'stopAtCheckpoint' | 'delete' | 'save' | 'sample' | 'markStopped';
+type PendingAction =
+  | 'start'
+  | 'remove'
+  | 'stop'
+  | 'stopAtCheckpoint'
+  | 'delete'
+  | 'save'
+  | 'sample'
+  | 'markStopped'
+  | 'rename';
 
 // If the job never reports a state change (e.g. the request silently failed
 // server-side), unlock the bar after this long so it can't stay stuck.
@@ -256,6 +266,49 @@ export default function JobActionBar({
                 <Copy className="w-4 h-4" />
                 Clone Job
               </Link>
+            </MenuItem>
+          )}
+          {job.job_type === 'train' && !canStop && !['queued', 'stopping'].includes(job.status) && (
+            <MenuItem disabled={isBusy}>
+              <div
+                className={isBusy ? menuItemDisabledClass : menuItemEnabledClass}
+                onClick={() => {
+                  if (isBusy) return;
+                  // DUAL BUILD: the folder, its LoRAs + thumbnails and Compare's paths follow the name
+                  openConfirm({
+                    title: 'Rename Training',
+                    message: 'Renames the job, its folder and every LoRA and thumbnail in it.',
+                    type: 'info',
+                    confirmText: 'Rename',
+                    inputTitle: 'New name',
+                    inputValue: job.name,
+                    onConfirm: value =>
+                      runAction(
+                        'rename',
+                        async () => {
+                          const next = (value ?? '').trim();
+                          if (!next || next === job.name) return;
+                          try {
+                            const r = await renameJob(job.id, next);
+                            if (r.error) openConfirm({ title: 'Rename', message: r.error, type: 'warning', confirmText: 'OK' });
+                          } catch (e: any) {
+                            openConfirm({
+                              title: "Couldn't rename",
+                              message: e?.response?.data?.error || String(e?.message ?? e),
+                              type: 'warning',
+                              confirmText: 'OK',
+                            });
+                          }
+                          onRefresh && onRefresh();
+                        },
+                        false,
+                      ),
+                  });
+                }}
+              >
+                {pending === 'rename' ? menuSpinner : <TextCursorInput className="w-4 h-4" />}
+                Rename
+              </div>
             </MenuItem>
           )}
           {job.job_type === 'train' && canStop && (

@@ -4,7 +4,7 @@ import useCPUInfo from '@/hooks/useCPUInfo';
 import GPUWidget from '@/components/GPUWidget';
 import CPUWidget from '@/components/CPUWidget';
 import FilesWidget from '@/components/FilesWidget';
-import { getTotalSteps } from '@/utils/jobs';
+import { getNextSave, getTotalSteps } from '@/utils/jobs';
 import { Cpu, HardDrive, Info, Gauge, Plus } from 'lucide-react';
 import { apiClient } from '@/utils/api';
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -50,6 +50,7 @@ export default function JobOverview({ job }: JobOverviewProps) {
   }, [job.id, job.status, job.step, jobTotal]);
   const totalSteps = addedTotal ?? jobTotal;
   const progress = (job.step / totalSteps) * 100;
+  const nextSave = job.status === 'running' ? getNextSave(job, totalSteps) : null;
   const canAddCheckpoint = (job.job_type || 'train') === 'train' && !(job.stop && job.status === 'running');
 
   const handleAddCheckpoint = async () => {
@@ -141,6 +142,11 @@ export default function JobOverview({ job }: JobOverviewProps) {
                 <span className="flex items-center gap-2 text-gray-200">
                   {addMsg && <span className="text-xs text-rose-400">{addMsg}</span>}
                   Step {job.step} of {totalSteps}
+                  {nextSave !== null && (
+                    <span className="text-gray-400" title={`Next save at step ${nextSave}`}>
+                      ({nextSave - job.step} steps to next save)
+                    </span>
+                  )}
                   {queuedTotal !== null && queuedTotal !== totalSteps && (
                     <span className="text-xs text-amber-400" title="Queued like a Live Edit">
                       → {queuedTotal} at next save

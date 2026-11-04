@@ -297,6 +297,21 @@ class DiffusionTrainer(SDTrainer):
         if self.accelerator.is_main_process and self.is_ui_trainer:
             self._run_async_operation(self._update_key(key, value))
 
+    def saved_thumbnail_prompt(self):
+        # DUAL BUILD: the thumbnail prompt as saved on the job now ("Set as thumbnail" can change it
+        # mid-run), so the end-of-job thumbnails use the latest pick; None when unreadable
+        if not self.is_ui_trainer:
+            return None
+        import json
+        try:
+            with self._db_connect() as conn:
+                row = conn.execute("SELECT job_config FROM Job WHERE id = ?", (self.job_id,)).fetchone()
+            if row:
+                return int(json.loads(row[0])['config']['process'][0].get('sample', {}).get('thumbnail_prompt', 0) or 0)
+        except Exception:
+            pass
+        return None
+
     def persist_live_train_steps(self, steps, save_schedule=None):
         # DUAL BUILD: a step total (and save schedule) changed mid-run via Live Edit or
         # "+1 checkpoint" is written back to the saved job once it applies, so the overview
@@ -559,6 +574,9 @@ class DiffusionTrainer(SDTrainer):
 
     def sample(self, step=None, is_first=False):
         self.maybe_stop()
+        if getattr(self.sample_config, 'defer_samples', False):
+            print_acc(f"Sample later is on: skipped samples for step {step if step is not None else getattr(self, 'step_num', 0)}")
+            return
         # route samples through ComfyUI when configured (non-blocking, or skipped if ComfyUI
         # is down); internal sampler only when ComfyUI sampling is off
         if self._fire_comfy_sample(step, is_first):

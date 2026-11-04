@@ -47,6 +47,8 @@ export async function POST(request: Request) {
       DEFAULT_MODEL_ARCH,
       COMFY_URL,
       COMFY_SAMPLE_WORKFLOW,
+      COMFY_LATER_URL,
+      COMFY_LATER_WORKFLOW,
     } = body;
 
     // Upsert both settings
@@ -93,10 +95,46 @@ export async function POST(request: Request) {
         update: { value: COMFY_SAMPLE_WORKFLOW ?? '' },
         create: { key: 'COMFY_SAMPLE_WORKFLOW', value: COMFY_SAMPLE_WORKFLOW ?? '' },
       }),
+      // dual build: second ComfyUI the Samples tab can render later samples on (blank = none)
+      prisma.settings.upsert({
+        where: { key: 'COMFY_LATER_URL' },
+        update: { value: COMFY_LATER_URL ?? '' },
+        create: { key: 'COMFY_LATER_URL', value: COMFY_LATER_URL ?? '' },
+      }),
+      // dual build: the workflow tied to that second ComfyUI (blank = the sample workflow above)
+      prisma.settings.upsert({
+        where: { key: 'COMFY_LATER_WORKFLOW' },
+        update: { value: COMFY_LATER_WORKFLOW ?? '' },
+        create: { key: 'COMFY_LATER_WORKFLOW', value: COMFY_LATER_WORKFLOW ?? '' },
+      }),
     ]);
 
     flushCache();
 
+    return NextResponse.json({ success: true });
+  } catch (error) {
+    return NextResponse.json({ error: 'Failed to update settings' }, { status: 500 });
+  }
+}
+
+// dual build: save just the given settings (the quick popups on New Job), leaving the rest alone
+const PATCHABLE = ['HF_TOKEN', 'COMFY_SAMPLE_WORKFLOW', 'COMFY_LATER_WORKFLOW'];
+
+export async function PATCH(request: Request) {
+  try {
+    const body = await request.json();
+    const keys = Object.keys(body ?? {}).filter(k => PATCHABLE.includes(k) && typeof body[k] === 'string');
+    if (!keys.length) return NextResponse.json({ error: 'Nothing to save' }, { status: 400 });
+    await Promise.all(
+      keys.map(key =>
+        prisma.settings.upsert({
+          where: { key },
+          update: { value: body[key].trim() },
+          create: { key, value: body[key].trim() },
+        }),
+      ),
+    );
+    flushCache();
     return NextResponse.json({ success: true });
   } catch (error) {
     return NextResponse.json({ error: 'Failed to update settings' }, { status: 500 });

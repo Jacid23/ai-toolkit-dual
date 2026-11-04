@@ -23,7 +23,8 @@ import {
 } from '@/components/formInputs';
 import Card from '@/components/Card';
 import { X, Copy, Wand2, SquareDashed, Info } from 'lucide-react';
-import { openDoc } from '@/components/DocModal';
+import { openDoc, docState } from '@/components/DocModal';
+import { openQuickSetting } from '@/components/QuickSettingModal';
 import { openUpsamplePromptsModal, toAspectRatio } from '@/components/UpsamplePromptsModal';
 import { openPromptBoxEditor } from '@/components/PromptBoxEditorModal';
 import { openPromptLibrary } from '@/components/PromptLibraryModal';
@@ -36,7 +37,7 @@ import { isMac } from '@/helpers/basic';
 import { gpuSelectOptions, isSplitSelection } from '@/utils/dualGpu';
 import TextEncoderSelect, { supportsTextEncoderSelect } from '@/components/TextEncoderSelect';
 import VaeSelect from '@/components/VaeSelect';
-import { DatasetPromptAutoLoad } from '@/components/DatasetPromptLink';
+import { DatasetPromptAutoLoad, loadDatasetPrompts } from '@/components/DatasetPromptLink';
 import ComfySampleToggle from '@/components/ComfySampleSelect';
 import ModelDownloadButton from '@/components/ModelDownloadButton';
 
@@ -54,6 +55,8 @@ type Props = {
   onArchChanged?: (arch: string) => void;
   // DUAL BUILD: live-edit mode — render the whole form read-only (grayed) for context
   liveEdit?: boolean;
+  // a brand-new job (not edit / clone / Live Edit): only then does picking a dataset load its prompt group
+  newJob?: boolean;
 };
 
 const isDev = process.env.NODE_ENV === 'development';
@@ -71,6 +74,7 @@ export default function SimpleJob({
   onArchChanged,
   isLoading,
   liveEdit,
+  newJob,
 }: Props) {
   const { archs: modelArchs, groupedModelOptions } = useModelArchs();
 
@@ -355,6 +359,30 @@ export default function SimpleJob({
               disabled={runId !== null}
               required
             />
+            {/* DUAL BUILD: the folder this job's output folder is made in, set like the name before
+                the first run (moving it after would leave its files behind) */}
+            <TextInput
+              label="Save Location"
+              value={jobConfig.config.process[0].save_location || ''}
+              onChange={value => setJobConfig(value || undefined, 'config.process[0].save_location')}
+              placeholder={jobConfig.config.process[0].training_folder || 'Training Folder (Settings)'}
+              disabled={runId !== null}
+            />
+            {(() => {
+              const loc = (jobConfig.config.process[0].save_location || '').trim();
+              const absolute = /^([a-zA-Z]:[\\/]|[\\/]{2}|\/)/.test(loc);
+              if (loc && !absolute)
+                return <p className="text-xs text-red-400 pb-2">Use a full path (e.g. J:\Training\Group), or leave blank.</p>;
+              const root = (loc || jobConfig.config.process[0].training_folder || '').replace(/[\\/]+$/, '');
+              return root && jobConfig.config.name ? (
+                <p className="text-xs text-gray-500 pb-2 break-all">
+                  Saves to {root}
+                  {root.includes('/') && !root.includes('\\') ? '/' : '\\'}
+                  {jobConfig.config.name}
+                  {loc ? '' : ' (Training Folder)'}
+                </p>
+              ) : null;
+            })()}
             {showGPUSelect && (
               <SelectInput
                 label="GPU ID"
@@ -527,10 +555,25 @@ export default function SimpleJob({
                             >
                               read token
                             </a>{' '}
-                            and add it on the{' '}
-                            <a href="/settings" className="text-blue-400 hover:text-blue-300 underline">
-                              settings page
-                            </a>
+                            and{' '}
+                            <button
+                              type="button"
+                              onClick={() => {
+                                // a popup, not the settings page: leaving would lose this job form
+                                docState.set(null);
+                                openQuickSetting({
+                                  title: 'Hugging Face token',
+                                  settingKey: 'HF_TOKEN',
+                                  label: 'Read token',
+                                  secret: true,
+                                  placeholder: 'hf_…',
+                                  help: 'Saved to Settings; used to download gated models.',
+                                });
+                              }}
+                              className="text-blue-400 hover:text-blue-300 underline"
+                            >
+                              add it here
+                            </button>
                             .
                           </p>
                         </div>
@@ -1460,18 +1503,21 @@ export default function SimpleJob({
                       <SelectInput
                         label="Target Dataset"
                         value={dataset.folder_path}
-                        onChange={value => setJobConfig(value, `config.process[0].datasets[${i}].folder_path`)}
+                        onChange={value => {
+                          setJobConfig(value, `config.process[0].datasets[${i}].folder_path`);
+                          // new job: picking the first dataset loads its prompt group as the sample prompts
+                          if (i === 0 && newJob)
+                            loadDatasetPrompts(value).then(samples => {
+                              if (samples) setJobConfig(samples, `config.process[0].sample.samples`);
+                            });
+                        }}
                         options={datasetOptions}
                       />
-                      {i === 0 && (
+                      {i === 0 && newJob && (
                         <DatasetPromptAutoLoad
                           folderPath={dataset.folder_path}
-                          onLoadPrompts={prompts =>
-                            setJobConfig(
-                              prompts.map(p => ({ prompt: p.text })),
-                              `config.process[0].sample.samples`,
-                            )
-                          }
+                          currentPrompts={(jobConfig.config.process[0].sample.samples ?? []).map(s => s.prompt)}
+                          onLoadPrompts={samples => setJobConfig(samples, `config.process[0].sample.samples`)}
                         />
                       )}
                       {modelArch?.additionalSections?.includes('datasets.control_path') && (
@@ -1762,7 +1808,22 @@ export default function SimpleJob({
                 }
                 settings={jobConfig.config.process[0].sample.comfy}
                 onSettingsChange={value => setJobConfig(value, 'config.process[0].sample.comfy')}
+                server={jobConfig.config.process[0].sample.comfy_server}
+                onServerChange={value => setJobConfig(value, 'config.process[0].sample.comfy_server')}
               />
+              <Checkbox
+                label="Sample later"
+                className="pt-3"
+                checked={!!jobConfig.config.process[0].sample.defer_samples}
+                onChange={value => setJobConfig(value, 'config.process[0].sample.defer_samples')}
+              />
+              {jobConfig.config.process[0].sample.defer_samples && (
+                <p className="text-xs text-gray-500 mt-1">
+                  Nothing is sampled during training, so every GPU stays on the run. Each checkpoint shows as
+                  &quot;Not sampled&quot; on the Samples tab: Select missing → Regenerate renders them on either
+                  ComfyUI.
+                </p>
+              )}
             </div>
             <div className={sampleTopStyleClass}>
               <div>

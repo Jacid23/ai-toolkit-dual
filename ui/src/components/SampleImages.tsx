@@ -80,9 +80,12 @@ interface SampleImagesProps {
 type Slot = { path: string | null; step: number | null; idx: number; missing: boolean };
 type Row = { key: string; step: number | null; slots: Slot[] };
 
+// AITK's <time>__<step>_<idx>.<ext>, or a moved training's sample_<idx>\<name>_<step>.<ext>
 const slotOf = (p: string): { step: number; idx: number } | null => {
   const m = p.match(/__(\d+)_(\d+)\.[^.\\/]+$/);
-  return m ? { step: parseInt(m[1], 10), idx: parseInt(m[2], 10) } : null;
+  if (m) return { step: parseInt(m[1], 10), idx: parseInt(m[2], 10) };
+  const moved = p.match(/[\\/]sample_(\d+)[\\/][^\\/]*_(\d+)\.[^.\\/]+$/);
+  return moved ? { step: parseInt(moved[2], 10), idx: parseInt(moved[1], 10) } : null;
 };
 const missingKey = (step: number, idx: number) => `missing:${step}:${idx}`;
 const keyOfSlot = (s: Slot) => s.path ?? missingKey(s.step ?? -1, s.idx);
@@ -92,6 +95,8 @@ const slotOfKey = (k: string): RegenSlot | null => {
   return slotOf(k);
 };
 
+// "127.0.0.1:8188" from a ComfyUI address
+const hostOf = (url: string) => url.replace(/^https?:\/\//, '').replace(/\/+$/, '');
 const SHOW_MISSING_KEY = 'samples.showMissing';
 
 export default function SampleImages({ job }: SampleImagesProps) {
@@ -375,9 +380,14 @@ export default function SampleImages({ job }: SampleImagesProps) {
       iconColor = 'text-red-600 dark:text-red-400';
     }
     if (status == 'success' && sampleImages.length === 0) {
+      // no prompts saved on the job: no slots to show (or regenerate) for its checkpoints
+      const ckpts = regen.status?.checkpointSteps?.length ?? 0;
+      const noPrompts = regen.status?.promptCount === 0 && ckpts > 0;
       icon = <LuImageOff className="w-8 h-8" />;
-      text = 'No Samples Found';
-      subtitle = 'No samples have been generated yet';
+      text = noPrompts ? 'No Sample Prompts' : 'No Samples Found';
+      subtitle = noPrompts
+        ? `This job has no sample prompts, so its ${ckpts} checkpoint${ckpts === 1 ? '' : 's'} have no slots to fill. Add prompts in Live Edit (or Edit) and they show up here as "Not sampled".`
+        : 'No samples have been generated yet';
       showIt = true;
       bgColor = 'bg-gray-50 dark:bg-gray-800/50';
       textColor = 'text-gray-900 dark:text-gray-100';
@@ -395,7 +405,7 @@ export default function SampleImages({ job }: SampleImagesProps) {
         <p className="text-sm opacity-75 leading-relaxed">{subtitle}</p>
       </div>
     );
-  }, [status, sampleImages.length, rows.length]);
+  }, [status, sampleImages.length, rows.length, regen.status?.promptCount, regen.status?.checkpointSteps?.length]);
 
   // Inline style instead of Tailwind grid-cols-N classes — Tailwind only ships grid-cols-1..12,
   // so class-based columns silently break for larger sample counts.
@@ -480,11 +490,34 @@ export default function SampleImages({ job }: SampleImagesProps) {
               </button>
             </div>
           )}
+          {qs?.servers?.later && (
+            <label className="flex items-center gap-1.5 text-gray-400" title="ComfyUI new regenerations render on">
+              Render on
+              <select
+                value={regen.server}
+                onChange={e => regen.setServer(e.target.value === 'later' ? 'later' : 'main')}
+                className="rounded border border-gray-700 bg-gray-900 px-1.5 py-0.5 text-gray-200"
+              >
+                <option value="main">
+                  {qs.servers.labels?.main ?? 'Main'} ({hostOf(qs.servers.main)})
+                </option>
+                <option value="later">
+                  {qs.servers.labels?.later ?? 'Later'} ({hostOf(qs.servers.later)})
+                </option>
+              </select>
+            </label>
+          )}
           {regen.active && (
             <div className="flex items-center gap-2 text-blue-300">
               <RefreshCw className="w-3 h-3 animate-spin" />
               {current
-                ? `Rendering step ${current.step.toLocaleString()} (${current.done.length}/${current.indices.length})`
+                ? `Rendering step ${current.step.toLocaleString()} (${current.done.length}/${current.indices.length})` +
+                  (qs?.servers?.later
+                    ? ` on ${
+                        (current.server === qs.servers.later ? qs.servers.labels?.later : qs.servers.labels?.main) ??
+                        hostOf(current.server ?? qs.servers.main)
+                      }`
+                    : '')
                 : 'Starting'}
               {qs && qs.pending.length > 0 && <span className="text-gray-400">· {qs.pending.length} queued</span>}
               {qs && qs.pending.length > 0 && (

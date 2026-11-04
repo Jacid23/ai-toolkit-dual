@@ -4,6 +4,7 @@ import fs from 'fs';
 import path from 'path';
 import { Readable } from 'stream';
 import { getDatasetsRoot, getTrainingFolder, getDataRoot } from '@/server/settings';
+import { saveLocationRoots } from '@/server/jobFolders';
 import { catchAllToFilePath } from '@/server/catchAllPath';
 
 const contentTypeMap: { [key: string]: string } = {
@@ -42,7 +43,8 @@ export async function GET(request: NextRequest, { params }: { params: { imagePat
     const trainingRoot = await getTrainingFolder();
     const dataRoot = await getDataRoot();
 
-    const allowedDirs = [datasetRoot, trainingRoot, dataRoot];
+    // dual build: plus every job's own save location
+    const allowedDirs = [datasetRoot, trainingRoot, dataRoot, ...(await saveLocationRoots())];
 
     // Security check: resolve the path so any `..` segments are collapsed,
     // then ensure it's still under an allowed root. (Plain `.includes('..')`

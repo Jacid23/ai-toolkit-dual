@@ -264,7 +264,9 @@ export interface SampleConfig {
   sample_start_step: number;
   sample_schedule?: number[];
   comfy_sample?: boolean; // training samples render via ComfyUI (Settings → default sample workflow)
+  defer_samples?: boolean; // "Sample later": nothing during training; Samples tab renders them afterwards
   comfy_workflow?: string; // legacy per-job workflow; still honored, overrides the default
+  comfy_server?: string; // ComfyUI for this job's training samples: '' = Default (Settings), else its address
   comfy?: ComfySampleSettings; // ComfyUI-only choices; size/steps/guidance/seed/neg come from this card
   sample_on_save?: boolean;
   width: number;
@@ -299,6 +301,8 @@ export interface ProcessConfig {
   type: string;
   sqlite_db_path?: string;
   training_folder: string;
+  // DUAL BUILD: folder the job's output folder is made in (absolute path); blank = Training Folder
+  save_location?: string;
   performance_log_every: number;
   trigger_word: string | null;
   device: string;

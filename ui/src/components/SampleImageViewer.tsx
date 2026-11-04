@@ -42,8 +42,20 @@ export default function SampleImageViewer({
   const [isOpen, setIsOpen] = useState(Boolean(imgPath));
   const [showingControlIdx, setShowingControlIdx] = useState<number | null>(null);
   const [showBoxes, setShowBoxes] = useState<boolean>(false);
+  // DUAL BUILD: which prompt's samples sit beside the job's LoRAs as their .webp thumbnails
+  const [thumbPrompt, setThumbPrompt] = useState<number | null>(null);
+  const [thumbMsg, setThumbMsg] = useState<string | null>(null);
+  const [thumbBusy, setThumbBusy] = useState(false);
 
   useEffect(() => setMounted(true), []);
+
+  useEffect(() => {
+    if (!jobId || !imgPath) return;
+    apiClient
+      .get(`/api/jobs/${jobId}/thumbnail`)
+      .then(r => setThumbPrompt(typeof r.data?.prompt === 'number' ? r.data.prompt : 0))
+      .catch(() => {});
+  }, [jobId, Boolean(imgPath)]);
 
   // open/close based on external value
   useEffect(() => {
@@ -170,6 +182,22 @@ export default function SampleImageViewer({
     },
     [jobId, imgPath, imgInfo, onRegenerate],
   );
+
+  const setAsThumbnail = useCallback(async () => {
+    if (!jobId) return;
+    const idx = imgInfo.promptIdx;
+    setThumbBusy(true);
+    setThumbMsg(null);
+    try {
+      const r = await apiClient.post(`/api/jobs/${jobId}/thumbnail`, { prompt: idx });
+      setThumbPrompt(idx);
+      setThumbMsg(`${r.data?.written ?? 0} thumbnail(s) written`);
+    } catch (e: any) {
+      setThumbMsg(e?.response?.data?.error || 'Thumbnails failed');
+    } finally {
+      setThumbBusy(false);
+    }
+  }, [jobId, imgInfo]);
 
   const sampleItem = useMemo<SampleItem | null>(() => {
     if (!sampleConfig) return null;
@@ -444,6 +472,30 @@ export default function SampleImageViewer({
                       title={`Control image ${idx + 1}`}
                     />
                   ))}
+                </div>
+              )}
+
+              {jobId && imgPath && !isText(imgPath) && !isAudio(imgPath) && !isVideo(imgPath) && (
+                <div className="mr-4 flex flex-col items-end gap-0.5">
+                  <button
+                    type="button"
+                    onClick={setAsThumbnail}
+                    disabled={thumbBusy}
+                    title="Put this prompt's sample beside every LoRA of the job as its .webp thumbnail (replaces the current ones)"
+                    className={classNames(
+                      'rounded-md px-2.5 py-1 text-xs disabled:opacity-60',
+                      thumbPrompt === imgInfo.promptIdx
+                        ? 'bg-green-800 hover:bg-green-700 text-green-100'
+                        : 'bg-gray-700 hover:bg-gray-600 text-gray-100',
+                    )}
+                  >
+                    {thumbBusy
+                      ? 'Writing…'
+                      : thumbPrompt === imgInfo.promptIdx
+                        ? `Thumbnail: prompt ${imgInfo.promptIdx + 1} ✓`
+                        : 'Set as thumbnail'}
+                  </button>
+                  {thumbMsg && <span className="text-[11px] text-gray-400 max-w-[260px] text-right">{thumbMsg}</span>}
                 </div>
               )}
 

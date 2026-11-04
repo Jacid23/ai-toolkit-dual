@@ -19,12 +19,21 @@ export type SavedJobDefault = { process: { [key: string]: any }; gpu_ids?: strin
 export type SavedJobDefaults = { [arch: string]: SavedJobDefault };
 
 // fields that change every job (or are set by the app) and are never saved
-const PER_JOB_KEYS = ['datasets', 'trigger_word', 'training_folder', 'sqlite_db_path', 'device', 'performance_log_every'];
+const PER_JOB_KEYS = [
+  'datasets',
+  'trigger_word',
+  'training_folder',
+  'save_location',
+  'sqlite_db_path',
+  'device',
+  'performance_log_every',
+];
 
 // per-job fields inside a section: sample prompts and the custom save/sample step lists
 const PER_JOB_NESTED: [string, string][] = [
   ['sample', 'samples'],
   ['sample', 'sample_schedule'],
+  ['sample', 'thumbnail_prompt'],
   ['save', 'save_schedule'],
 ];
 

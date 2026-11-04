@@ -3,7 +3,7 @@ import prisma from '@/server/prisma';
 import path from 'path';
 import fs from 'fs';
 import type { FileHandle } from 'fs/promises';
-import { getTrainingFolder } from '@/server/settings';
+import { jobMetaFolder } from '@/server/jobFolders';
 
 export async function GET(request: NextRequest, { params }: { params: { jobID: string } }) {
   const { jobID } = await params;
@@ -16,9 +16,7 @@ export async function GET(request: NextRequest, { params }: { params: { jobID: s
     return NextResponse.json({ error: 'Job not found' }, { status: 404 });
   }
 
-  const trainingFolder = await getTrainingFolder();
-  const jobFolder = path.join(trainingFolder, job.name);
-  const logPath = path.join(jobFolder, 'log.txt');
+  const logPath = path.join(await jobMetaFolder(job), 'log.txt');
 
   try {
     await fs.promises.access(logPath);

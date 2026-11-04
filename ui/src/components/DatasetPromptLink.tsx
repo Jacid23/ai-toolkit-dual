@@ -63,39 +63,71 @@ export default function DatasetPromptGroup({ datasetName }: { datasetName: strin
   );
 }
 
-// New Job: load the picked dataset's prompts into the job's samples
+type LinkedPrompts = { group: string; prompts: { name: string; text: string }[] };
+
+const fetchLinkedPrompts = async (datasetName: string): Promise<LinkedPrompts> => {
+  const r = await apiClient.get(`/api/datasets/prompt_link?datasetName=${encodeURIComponent(datasetName)}`);
+  return { group: r.data?.group || '', prompts: r.data?.prompts ?? [] };
+};
+
+// New Job only (never edit / clone / Live Edit, which keep the job's own prompts): the dataset's
+// prompt group is loaded into the job's samples when a dataset is picked (the select's
+// onChange). It is just a starting point, nothing links the job to it; when the prompts no
+// longer match the group's, "Use these" loads the group's again.
+export async function loadDatasetPrompts(folderPath: string): Promise<{ prompt: string }[] | null> {
+  const datasetName = datasetNameOf(folderPath);
+  if (!datasetName) return null;
+  const { prompts } = await fetchLinkedPrompts(datasetName).catch(() => ({ prompts: [] as LinkedPrompts['prompts'] }));
+  return prompts.length ? prompts.map(p => ({ prompt: p.text })) : null;
+}
+
 export function DatasetPromptAutoLoad({
   folderPath,
+  currentPrompts,
   onLoadPrompts,
 }: {
   folderPath: string;
-  onLoadPrompts: (prompts: { name: string; text: string }[]) => void;
+  currentPrompts: string[];
+  onLoadPrompts: (samples: { prompt: string }[]) => void;
 }) {
-  const [group, setGroup] = useState<string>('');
+  const [linked, setLinked] = useState<LinkedPrompts>({ group: '', prompts: [] });
   const datasetName = datasetNameOf(folderPath);
 
   useEffect(() => {
     if (!datasetName) {
-      setGroup('');
+      setLinked({ group: '', prompts: [] });
       return;
     }
-    apiClient
-      .get(`/api/datasets/prompt_link?datasetName=${encodeURIComponent(datasetName)}`)
-      .then(r => {
-        setGroup(r.data?.group || '');
-        const prompts = r.data?.prompts ?? [];
-        if (prompts.length) onLoadPrompts(prompts);
-      })
+    fetchLinkedPrompts(datasetName)
+      .then(setLinked)
       .catch(() => {});
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [datasetName]);
 
   if (!datasetName) return null;
+  const { group, prompts } = linked;
+  const norm = (t: string) => t.replace(/\s+/g, ' ').trim();
+  const same =
+    prompts.length === currentPrompts.length && prompts.every((p, i) => norm(p.text) === norm(currentPrompts[i] ?? ''));
   return (
     <p className="text-xs text-gray-500 pt-1.5">
-      {group ? (
+      {group && same ? (
         <>
           Sample prompts loaded from <span className="text-gray-300">{group}</span>.{' '}
+        </>
+      ) : group ? (
+        <>
+          Dataset prompts: <span className="text-gray-300">{group}</span>
+          {prompts.length ? ` (${prompts.length})` : ''}.{' '}
+          {prompts.length > 0 && (
+            <button
+              type="button"
+              onClick={() => onLoadPrompts(prompts.map(p => ({ prompt: p.text })))}
+              className="text-blue-400 hover:underline"
+            >
+              Use these
+            </button>
+          )}
+          {prompts.length > 0 && ' · '}
         </>
       ) : (
         'No sample prompts set for this dataset. '

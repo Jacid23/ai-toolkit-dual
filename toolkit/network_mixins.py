@@ -691,8 +691,12 @@ class ToolkitNetworkMixin:
                 weights_sd = self.base_model_ref().load_lora(file)
             else:
                 if os.path.splitext(file)[1] == ".safetensors":
-                    from safetensors.torch import load_file
-                    weights_sd = load_file(file)
+                    # DUAL BUILD: read into memory, not load_file's memory map. On Windows a mapped
+                    # file can't be written, so resuming from <name>.safetensors made the final
+                    # save over that same file fail with "Access is denied (os error 5)".
+                    from safetensors.torch import load as load_bytes
+                    with open(file, 'rb') as f:
+                        weights_sd = load_bytes(f.read())
                 else:
                     weights_sd = torch.load(file, map_location="cpu")
         else:

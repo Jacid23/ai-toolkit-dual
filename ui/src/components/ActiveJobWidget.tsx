@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { CgSpinner } from 'react-icons/cg';
 import useJobsList from '@/hooks/useJobsList';
-import { getTotalSteps } from '@/utils/jobs';
+import { getNextSave, getTotalSteps } from '@/utils/jobs';
 
 export default function ActiveJobWidget() {
   const { jobs } = useJobsList({ onlyActive: true, reloadInterval: 5000 });
@@ -23,6 +23,7 @@ export default function ActiveJobWidget() {
             }
             const pct = totalSteps ? Math.min(100, (job.step / totalSteps) * 100) : 0;
             const isRunning = job.status === 'running' || job.status === 'stopping';
+            const nextSave = job.status === 'running' && totalSteps ? getNextSave(job, totalSteps) : null;
 
             let label = job.name;
             let href = `/jobs/${job.id}`;
@@ -58,8 +59,12 @@ export default function ActiveJobWidget() {
                       </div>
                       <div className="flex justify-between gap-2 mt-0.5 min-w-0">
                         <span className={`text-[10px] truncate min-w-0 ${statusColor}`}>{job.info || job.status}</span>
-                        <span className="text-[10px] text-gray-400 flex-shrink-0">
+                        <span
+                          className="text-[10px] text-gray-400 flex-shrink-0"
+                          title={nextSave !== null ? `Next save at step ${nextSave}` : undefined}
+                        >
                           {job.step} / {totalSteps}
+                          {nextSave !== null && <span className="text-gray-500"> · {nextSave - job.step} to save</span>}
                         </span>
                       </div>
                     </div>

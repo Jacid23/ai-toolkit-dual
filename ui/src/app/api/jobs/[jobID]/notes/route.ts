@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/server/prisma';
 import path from 'path';
 import fs from 'fs';
-import { getTrainingFolder } from '@/server/settings';
+import { jobMetaFolder } from '@/server/jobFolders';
 
 const getNotesPath = async (jobID: string): Promise<string | null> => {
   const job = await prisma.job.findUnique({
@@ -13,8 +13,7 @@ const getNotesPath = async (jobID: string): Promise<string | null> => {
     return null;
   }
 
-  const trainingFolder = await getTrainingFolder();
-  return path.join(trainingFolder, job.name, 'notes.md');
+  return path.join(await jobMetaFolder(job), 'notes.md');
 };
 
 export async function GET(request: NextRequest, { params }: { params: { jobID: string } }) {

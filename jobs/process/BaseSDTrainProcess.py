@@ -127,7 +127,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
             self.has_first_sample_requested = False
             self.first_sample_config = self.sample_config
         self.logging_config = LoggingConfig(**self.get_conf('logging', {}))
-        self.logger = create_logger(self.logging_config, config, self.save_root)
+        self.logger = create_logger(self.logging_config, config, self.meta_root)
         self.optimizer: torch.optim.Optimizer = None
         self.lr_scheduler = None
         self.data_loader: Union[DataLoader, None] = None
@@ -294,7 +294,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
         # the job), it is logged and skipped. Heavy settings (rank, optimizer, model,
         # batch, resolution) are NOT hot-swappable and are never accepted here.
         import json
-        path = os.path.join(self.save_root, '.pending_updates.json')
+        path = os.path.join(self.meta_root, '.pending_updates.json')
         try:
             if not os.path.exists(path):
                 return
@@ -322,6 +322,8 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 set_attr(self.sample_config, 'height', int(updates['sample_height']))
             if 'sample_seed' in updates:
                 set_attr(self.sample_config, 'seed', int(updates['sample_seed']))
+            if 'defer_samples' in updates:
+                set_attr(self.sample_config, 'defer_samples', bool(updates['defer_samples']))
             if 'sampler' in updates:
                 set_attr(self.sample_config, 'sampler', str(updates['sampler']))
             if 'sample_prompts' in updates:
@@ -411,7 +413,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
         if not self.accelerator.is_main_process:
             return
         flush()
-        sample_folder = os.path.join(self.save_root, 'samples')
+        sample_folder = os.path.join(self.meta_root, 'samples')
         gen_img_config_list = []
 
         sample_config = self.first_sample_config if is_first else self.sample_config
@@ -622,6 +624,10 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 yaml_file = os.path.splitext(item)[0] + ".yaml"
                 if os.path.exists(yaml_file):
                     os.remove(yaml_file)
+                # DUAL BUILD: and its .webp thumbnail
+                thumb_file = os.path.splitext(item)[0] + ".webp"
+                if os.path.exists(thumb_file):
+                    os.remove(thumb_file)
             if combined_items:
                 latest_item = combined_items[-1]
         return latest_item
@@ -826,7 +832,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 'scale': self.snr_gos.scale.item(),
                 'gamma': self.snr_gos.gamma.item(),
             }
-            path_to_save = file_path = os.path.join(self.save_root, 'learnable_snr.json')
+            path_to_save = file_path = os.path.join(self.meta_root, 'learnable_snr.json')
             with open(path_to_save, 'w') as f:
                 json.dump(json_data, f, indent=4)
         
@@ -836,7 +842,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
         if self.optimizer is not None:
             try:
                 filename = f'optimizer.pt'
-                file_path = os.path.join(self.save_root, filename)
+                file_path = os.path.join(self.meta_root, filename)
                 try:
                     state_dict = unwrap_model(self.optimizer).state_dict()
                 except Exception as e:
@@ -986,6 +992,8 @@ class BaseSDTrainProcess(BaseTrainProcess):
             # Filter out non-existent paths and sort by creation time
             if paths:
                 paths = [p for p in paths if os.path.exists(p)]
+                # DUAL BUILD: only checkpoints (the job folder also holds <name>_<step>.webp thumbnails)
+                paths = [p for p in paths if p.endswith(('.safetensors', '.pt')) or os.path.isdir(p)]
                 # remove false positives
                 if '_LoRA' not in name:
                     paths = [p for p in paths if '_LoRA' not in p]
@@ -2036,7 +2044,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 self.sd.noise_scheduler, device=self.device_torch
             )
             # check to see if previous settings exist
-            path_to_load = os.path.join(self.save_root, 'learnable_snr.json')
+            path_to_load = os.path.join(self.meta_root, 'learnable_snr.json')
             if os.path.exists(path_to_load):
                 with open(path_to_load, 'r') as f:
                     json_data = json.load(f)
@@ -2328,7 +2336,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
 
         # check if it exists
         optimizer_state_filename = f'optimizer.pt'
-        optimizer_state_file_path = os.path.join(self.save_root, optimizer_state_filename)
+        optimizer_state_file_path = os.path.join(self.meta_root, optimizer_state_filename)
         if os.path.exists(optimizer_state_file_path):
             # try to load
             # previous param groups
@@ -3020,6 +3028,18 @@ class BaseSDTrainProcess(BaseTrainProcess):
         print_acc("")
         if self.accelerator.is_main_process:
             self.logger.finish()
+            # DUAL BUILD: each LoRA gets its thumbnail prompt's sample beside it as <name>[_<step>].webp
+            # (samples ComfyUI renders later are added by the UI as they arrive)
+            try:
+                from toolkit.job_thumbnails import write_thumbnails
+                saved = getattr(self, 'saved_thumbnail_prompt', None)
+                prompt_idx = saved() if callable(saved) else None
+                if prompt_idx is None:
+                    prompt_idx = int((self.get_conf('sample', {}) or {}).get('thumbnail_prompt', 0) or 0)
+                n = write_thumbnails(self.save_root, prompt_idx, self.step_num)
+                print_acc(f"Wrote {n} thumbnail(s) from sample prompt {prompt_idx + 1}")
+            except Exception as e:
+                print_acc(f"Thumbnails skipped: {e}")
         self.accelerator.end_training()
 
         if self.accelerator.is_main_process:
@@ -3110,7 +3130,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
         # Generate the widget section
         widgets = []
         sample_image_paths = []
-        samples_dir = os.path.join(self.save_root, "samples")
+        samples_dir = os.path.join(self.meta_root, "samples")
         if os.path.isdir(samples_dir):
             for filename in os.listdir(samples_dir):
                 #The filenames are structured as 1724085406830__00000500_0.jpg

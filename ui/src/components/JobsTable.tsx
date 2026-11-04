@@ -11,8 +11,9 @@ import { startQueue, stopQueue } from '@/utils/queue';
 import { CgSpinner } from 'react-icons/cg';
 import useGPUInfo from '@/hooks/useGPUInfo';
 import { openConfirm } from '@/components/ConfirmModal';
-import { deleteJob, getTotalSteps, getSavePoints, stopJob } from '@/utils/jobs';
-import { Trash2 } from 'lucide-react';
+import { deleteJob, getTotalSteps, getSavePoints, getNextSave, stopJob } from '@/utils/jobs';
+import { Tag, Trash2 } from 'lucide-react';
+import JobsExplorer, { setJobTags } from '@/components/jobs/JobsExplorer';
 
 interface JobsTableProps {
   autoStartQueue?: boolean;
@@ -98,6 +99,25 @@ export default function JobsTable({ onlyActive = false, job_type = null }: JobsT
     });
   };
 
+  // DUAL BUILD: tag every selected job at once (the Jobs explorer's tags)
+  const bulkTags = (mode: 'add' | 'remove') =>
+    openConfirm({
+      title: mode === 'add' ? 'Add tags' : 'Remove tags',
+      message: `${mode === 'add' ? 'Add to' : 'Remove from'} ${selectedIds.size} job${selectedIds.size === 1 ? '' : 's'}, comma separated.`,
+      type: 'info',
+      confirmText: mode === 'add' ? 'Add' : 'Remove',
+      inputTitle: 'best, lokr test',
+      onConfirm: async value => {
+        const tags = (value ?? '')
+          .split(',')
+          .map(t => t.trim())
+          .filter(Boolean);
+        if (!tags.length) return;
+        await setJobTags({ ids: Array.from(selectedIds), [mode]: tags });
+        refreshJobs();
+      },
+    });
+
   const columns: TableColumn[] = [
     {
       title: (
@@ -167,11 +187,19 @@ export default function JobsTable({ onlyActive = false, job_type = null }: JobsT
 
         const savePoints = getSavePoints(row, totalSteps);
         const pct = Math.min(100, (row.step / totalSteps) * 100);
+        const nextSave = row.status === 'running' ? getNextSave(row, totalSteps) : null;
         return (
           <div>
             <div className="text-xs text-gray-400">
               {row.step} / {totalSteps}
-              {savePoints.length > 0 && <span className="opacity-60"> · {savePoints.length} saves</span>}
+              {nextSave !== null ? (
+                <span className="opacity-60" title={`Next save at step ${nextSave}`}>
+                  {' '}
+                  · {nextSave - row.step} to next save
+                </span>
+              ) : (
+                savePoints.length > 0 && <span className="opacity-60"> · {savePoints.length} saves</span>
+              )}
             </div>
             <div className="relative bg-gray-700 rounded-full h-1.5">
               <div className="bg-blue-500 h-1.5 rounded-full" style={{ width: `${pct}%` }}></div>
@@ -236,9 +264,7 @@ export default function JobsTable({ onlyActive = false, job_type = null }: JobsT
       // a split job (gpu_ids "0,1") occupies several cards -> list it under EACH
       // GPU it uses, not just the first, so both cards show it as running.
       const ids = job.gpu_ids?.split(',').map(s => s.trim()) ?? [];
-      const keys = gpuList
-        .filter(gpu => ids.includes(gpu.index.toString()))
-        .map(gpu => `${gpu.index}`);
+      const keys = gpuList.filter(gpu => ids.includes(gpu.index.toString())).map(gpu => `${gpu.index}`);
       const targetKeys = keys.length > 0 ? keys : ['0'];
       if (['queued', 'running', 'stopping'].includes(job.status)) {
         targetKeys.forEach(key => {
@@ -271,8 +297,10 @@ export default function JobsTable({ onlyActive = false, job_type = null }: JobsT
   // if job dict is populated, we are always loaded
   if (Object.keys(jobsDict).length > 0) isLoading = false;
 
+  // DUAL BUILD: the full Jobs page never scrolls: the GPU queues (and any non-training idle jobs)
+  // take what they need at the top, up to a part of the height, and the explorer fills the rest
   return (
-    <div>
+    <div className={onlyActive ? undefined : 'flex flex-col h-full min-h-0'}>
       {(selectedIds.size > 0 || isDeleting) && (
         <div className="fixed top-16 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 px-4 py-2 bg-gray-800 rounded-lg border border-gray-700 shadow-lg">
           {isDeleting ? (
@@ -294,6 +322,19 @@ export default function JobsTable({ onlyActive = false, job_type = null }: JobsT
                 Clear
               </button>
               <button
+                onClick={() => bulkTags('add')}
+                className="text-xs text-gray-100 bg-gray-700 hover:bg-gray-600 px-2 py-1 rounded flex items-center gap-1"
+              >
+                <Tag className="w-3.5 h-3.5" />
+                Add tag
+              </button>
+              <button
+                onClick={() => bulkTags('remove')}
+                className="text-xs text-gray-300 bg-gray-700 hover:bg-gray-600 px-2 py-1 rounded"
+              >
+                Remove tag
+              </button>
+              <button
                 onClick={onMassDelete}
                 className="text-xs text-white bg-red-600 hover:bg-red-700 px-2 py-1 rounded flex items-center gap-1"
               >
@@ -304,85 +345,107 @@ export default function JobsTable({ onlyActive = false, job_type = null }: JobsT
           )}
         </div>
       )}
-      {Object.keys(jobsDict)
-        .sort()
-        .filter(key => key !== 'Idle')
-        .map(gpuKey => {
-          const queue = queues.find(q => `${q.gpu_ids}` === gpuKey) as Queue;
-          // a split job runs on a combined queue ("0,1"), not the single-GPU queue,
-          // so this card counts as running if ANY running queue includes this GPU.
-          const runningQueue = queues.find(
-            q => q.is_running && `${q.gpu_ids}`.split(',').includes(gpuKey),
-          ) as Queue | undefined;
-          const isRunning = Boolean(queue?.is_running || runningQueue);
-          const activeQueue = runningQueue ?? queue;
-          return (
-            <div key={gpuKey} className="mb-6">
-              <div
-                className={classNames(
-                  'text-md flex flex-wrap gap-y-1 px-2 sm:px-4 py-1 rounded-t-lg',
-                  { 'bg-green-600 dark:bg-green-900': isRunning },
-                  { 'bg-red-600 dark:bg-red-900': !isRunning },
-                )}
-              >
-                <div className="flex items-center space-x-2 flex-1 min-w-0 py-2">
-                  <h2 className="font-semibold text-white truncate">{jobsDict[gpuKey].name}</h2>
-                  <span className="px-2 py-0.5 bg-gray-700 rounded-full text-xs text-gray-300 flex-shrink-0">
-                    # {activeQueue?.gpu_ids ?? gpuKey}
-                  </span>
-                </div>
-                <div className="text-sm text-gray-300 italic flex items-center flex-shrink-0">
-                  {isRunning ? (
-                    <>
-                      <span className="text-green-100 dark:text-green-400 mr-2">Queue Running</span>
-                      <button
-                        onClick={async () => {
-                          await stopQueue((activeQueue?.gpu_ids ?? gpuKey) as string);
-                          refresh();
-                        }}
-                        className="ml-2 sm:ml-4 text-xs text-white bg-red-600 hover:bg-red-700 px-2 py-1 rounded"
-                      >
-                        STOP
-                      </button>
-                    </>
-                  ) : (
-                    <>
-                      <span className="text-red-100 dark:text-red-400 mr-2">Queue Stopped</span>
-                      <button
-                        onClick={async () => {
-                          await startQueue(gpuKey);
-                          refresh();
-                        }}
-                        className="ml-2 sm:ml-4 text-xs text-white bg-green-600 hover:bg-green-700 px-2 py-1 rounded"
-                      >
-                        START
-                      </button>
-                    </>
+      <div className={onlyActive ? undefined : 'shrink-0 max-h-[45%] overflow-y-auto'}>
+        {Object.keys(jobsDict)
+          .sort()
+          .filter(key => key !== 'Idle')
+          .map(gpuKey => {
+            const queue = queues.find(q => `${q.gpu_ids}` === gpuKey) as Queue;
+            // a split job runs on a combined queue ("0,1"), not the single-GPU queue,
+            // so this card counts as running if ANY running queue includes this GPU.
+            const runningQueue = queues.find(q => q.is_running && `${q.gpu_ids}`.split(',').includes(gpuKey)) as
+              | Queue
+              | undefined;
+            const isRunning = Boolean(queue?.is_running || runningQueue);
+            const activeQueue = runningQueue ?? queue;
+            return (
+              <div key={gpuKey} className="mb-6">
+                <div
+                  className={classNames(
+                    'text-md flex flex-wrap gap-y-1 px-2 sm:px-4 py-1 rounded-t-lg',
+                    { 'bg-green-600 dark:bg-green-900': isRunning },
+                    { 'bg-red-600 dark:bg-red-900': !isRunning },
                   )}
+                >
+                  <div className="flex items-center space-x-2 flex-1 min-w-0 py-2">
+                    <h2 className="font-semibold text-white truncate">{jobsDict[gpuKey].name}</h2>
+                    <span className="px-2 py-0.5 bg-gray-700 rounded-full text-xs text-gray-300 flex-shrink-0">
+                      # {activeQueue?.gpu_ids ?? gpuKey}
+                    </span>
+                  </div>
+                  <div className="text-sm text-gray-300 italic flex items-center flex-shrink-0">
+                    {isRunning ? (
+                      <>
+                        <span className="text-green-100 dark:text-green-400 mr-2">Queue Running</span>
+                        <button
+                          onClick={async () => {
+                            await stopQueue((activeQueue?.gpu_ids ?? gpuKey) as string);
+                            refresh();
+                          }}
+                          className="ml-2 sm:ml-4 text-xs text-white bg-red-600 hover:bg-red-700 px-2 py-1 rounded"
+                        >
+                          STOP
+                        </button>
+                      </>
+                    ) : (
+                      <>
+                        <span className="text-red-100 dark:text-red-400 mr-2">Queue Stopped</span>
+                        <button
+                          onClick={async () => {
+                            await startQueue(gpuKey);
+                            refresh();
+                          }}
+                          className="ml-2 sm:ml-4 text-xs text-white bg-green-600 hover:bg-green-700 px-2 py-1 rounded"
+                        >
+                          START
+                        </button>
+                      </>
+                    )}
+                  </div>
+                </div>
+                <UniversalTable
+                  columns={columns}
+                  rows={jobsDict[gpuKey].jobs}
+                  isLoading={isLoading}
+                  onRefresh={refresh}
+                  theadClassName={
+                    isRunning
+                      ? 'bg-green-700 dark:bg-green-950 text-white dark:text-gray-400'
+                      : 'bg-red-700 dark:bg-red-950 text-white dark:text-gray-400'
+                  }
+                />
+              </div>
+            );
+          })}
+        {!onlyActive &&
+          Object.keys(jobsDict).includes('Idle') &&
+          jobsDict['Idle'].jobs.some(j => j.job_type !== 'train') && (
+            <div className="mb-6 opacity-50">
+              <div className="text-md flex px-4 py-1 rounded-t-lg bg-slate-600">
+                <div className="flex items-center space-x-2 flex-1 py-2">
+                  <h2 className="font-semibold text-gray-100">Other idle jobs</h2>
                 </div>
               </div>
               <UniversalTable
                 columns={columns}
-                rows={jobsDict[gpuKey].jobs}
+                rows={jobsDict['Idle'].jobs.filter(j => j.job_type !== 'train')}
                 isLoading={isLoading}
                 onRefresh={refresh}
-                theadClassName={
-                  isRunning
-                    ? 'bg-green-700 dark:bg-green-950 text-white dark:text-gray-400'
-                    : 'bg-red-700 dark:bg-red-950 text-white dark:text-gray-400'
-                }
               />
             </div>
-          );
-        })}
+          )}
+      </div>
+      {/* DUAL BUILD: idle trainings live in the explorer (group tree, search, sortable columns) */}
       {!onlyActive && Object.keys(jobsDict).includes('Idle') && (
-        <div className="mb-6 opacity-50">
-          <div className="text-md flex px-4 py-1 rounded-t-lg bg-slate-600">
-            <div className="flex items-center space-x-2 flex-1 py-2">
-              <h2 className="font-semibold text-gray-100">Idle</h2>
-            </div>
-          </div>
-          <UniversalTable columns={columns} rows={jobsDict['Idle'].jobs} isLoading={isLoading} onRefresh={refresh} />
+        <div className="flex-1 min-h-0 pb-2">
+          <JobsExplorer
+            jobs={jobsDict['Idle'].jobs.filter(j => j.job_type === 'train')}
+            selectedIds={selectedIds}
+            toggleRow={toggleRow}
+            setSelectedIds={setSelectedIds}
+            disabled={isDeleting}
+            onRefresh={refresh}
+          />
         </div>
       )}
     </div>

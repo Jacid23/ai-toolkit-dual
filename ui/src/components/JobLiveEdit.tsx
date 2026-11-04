@@ -42,6 +42,8 @@ export default function JobLiveEdit({ job }: { job: Job }) {
     if (n(p.sample?.height) != null) updates.sample_height = n(p.sample?.height);
     if (n(p.sample?.seed) != null) updates.sample_seed = n(p.sample?.seed);
     if (p.sample?.sampler) updates.sampler = p.sample.sampler;
+    updates.defer_samples = !!p.sample?.defer_samples;
+    updates.comfy_server = typeof p.sample?.comfy_server === 'string' ? p.sample.comfy_server : '';
     const prompts = ((p.sample?.samples as any[]) || []).map(s => s?.prompt).filter(Boolean);
     if (prompts.length) updates.sample_prompts = prompts;
     if (n(p.save?.save_every) != null) updates.save_every = n(p.save?.save_every);
@@ -51,7 +53,12 @@ export default function JobLiveEdit({ job }: { job: Job }) {
     if (sched.length) updates.save_schedule = sched;
     try {
       const r = await apiClient.post(`/api/jobs/${job.id}/queue_updates`, updates);
-      setMsg(`Queued ${(r.data?.queued || []).length} change(s) — applies at the next save.`);
+      const now: string[] = r.data?.applied || [];
+      const applied = [
+        now.includes('sample_prompts') ? ' Sample prompts saved now (Samples tab slots updated).' : '',
+        now.includes('comfy_server') ? ' ComfyUI switched now.' : '',
+      ].join('');
+      setMsg(`Queued ${(r.data?.queued || []).length} change(s) — applies at the next save.${applied}`);
     } catch (e: any) {
       setMsg(e?.response?.data?.error || 'Failed to queue changes');
     } finally {

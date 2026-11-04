@@ -12,6 +12,8 @@ export interface Settings {
   DEFAULT_MODEL_ARCH: string;
   COMFY_URL: string;
   COMFY_SAMPLE_WORKFLOW: string;
+  COMFY_LATER_URL: string;
+  COMFY_LATER_WORKFLOW: string;
 }
 
 export default function useSettings() {
@@ -24,6 +26,8 @@ export default function useSettings() {
     DEFAULT_MODEL_ARCH: '',
     COMFY_URL: '',
     COMFY_SAMPLE_WORKFLOW: '',
+    COMFY_LATER_URL: '',
+    COMFY_LATER_WORKFLOW: '',
   });
   const [isSettingsLoaded, setIsLoaded] = useState(false);
   useEffect(() => {
@@ -41,6 +45,8 @@ export default function useSettings() {
           DEFAULT_MODEL_ARCH: data.DEFAULT_MODEL_ARCH || '',
           COMFY_URL: data.COMFY_URL || '',
           COMFY_SAMPLE_WORKFLOW: data.COMFY_SAMPLE_WORKFLOW || '',
+          COMFY_LATER_URL: data.COMFY_LATER_URL || '',
+          COMFY_LATER_WORKFLOW: data.COMFY_LATER_WORKFLOW || '',
         });
         setIsLoaded(true);
       })

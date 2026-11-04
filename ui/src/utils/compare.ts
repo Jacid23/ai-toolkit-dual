@@ -17,6 +17,7 @@ export interface CompareSettings {
   height: number;
   neg: string;
   regen: 'missing' | 'all';
+  server?: 'main' | 'later'; // which ComfyUI renders (Settings: ComfyUI Address / Later Samples ComfyUI)
 }
 
 export interface CompareData {
@@ -69,6 +70,7 @@ export const DEFAULT_COMPARE_SETTINGS: CompareSettings = {
   height: 1024,
   neg: '',
   regen: 'missing',
+  server: 'main',
 };
 
 export const newCompareData = (settings?: Partial<CompareSettings>): CompareData => ({

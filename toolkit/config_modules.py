@@ -98,6 +98,9 @@ class SampleConfig:
         # DUAL BUILD: on/off switch for the same thing, using the UI's default sample
         # workflow (Settings); comfy_workflow, when set, still picks a specific one.
         self.comfy_sample: bool = kwargs.get('comfy_sample', False)
+        # DUAL BUILD: "Sample later": render nothing during training (every GPU stays on the
+        # run); the UI's Samples tab renders the missing samples on ComfyUI afterwards.
+        self.defer_samples: bool = bool(kwargs.get('defer_samples', False))
         self.sample_every: int = kwargs.get('sample_every', 100)
         self.sample_start_step: int = kwargs.get('sample_start_step', 0)
         # explicit list of steps to sample at; if non-empty it OVERRIDES

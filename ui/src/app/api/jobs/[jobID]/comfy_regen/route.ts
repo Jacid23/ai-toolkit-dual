@@ -1,11 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/server/prisma';
 import { clearRegenQueue, enqueueRegen, missingSamples, RegenItem, regenStatus } from '@/server/comfySamples';
+import { comfyServers, getLaterComfyUrl } from '@/server/compare';
 
 // DUAL BUILD: the job's sample regen queue (server/comfySamples.ts), worked in the background.
 // GET: queue state + the sample slots that have no image. POST { items: [{ step, idx }] }
 // (or { step } for every prompt of a step): queue them; slots already queued are skipped.
-// DELETE: drop everything still waiting (the step rendering now finishes).
+// POST { server: 'later' } renders on the second ComfyUI (Settings → Later samples ComfyUI)
+// instead of the main one. DELETE: drop everything still waiting (the step rendering now finishes).
 const loadJob = async (params: Promise<{ jobID: string }>) => {
   const { jobID } = await params;
   return prisma.job.findUnique({ where: { id: jobID } });
@@ -14,7 +16,7 @@ const loadJob = async (params: Promise<{ jobID: string }>) => {
 export async function GET(_request: NextRequest, { params }: { params: Promise<{ jobID: string }> }) {
   const job = await loadJob(params);
   if (!job) return NextResponse.json({ error: 'Job not found' }, { status: 404 });
-  return NextResponse.json({ ...regenStatus(job.id), ...(await missingSamples(job)) });
+  return NextResponse.json({ ...regenStatus(job.id), ...(await missingSamples(job)), servers: await comfyServers() });
 }
 
 export async function POST(request: NextRequest, { params }: { params: Promise<{ jobID: string }> }) {
@@ -30,7 +32,14 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     items = Array.from({ length: promptCount }, (_, idx) => ({ step, idx }));
   }
   if (!items.length) return NextResponse.json({ error: 'Nothing to regenerate' }, { status: 400 });
-  const queued = enqueueRegen(job, items);
+  let server: string | null = null;
+  if (body?.server === 'later') {
+    server = await getLaterComfyUrl();
+    if (!server) {
+      return NextResponse.json({ error: 'No second ComfyUI set (Settings → Second ComfyUI).' }, { status: 400 });
+    }
+  }
+  const queued = enqueueRegen(job, items, server);
   return NextResponse.json({ queued, ...regenStatus(job.id) });
 }
 

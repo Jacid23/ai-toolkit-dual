@@ -1,14 +1,21 @@
 import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/server/prisma';
-import { comfyFetch, comfyJson } from '@/server/compare';
+import { cellComfyUrl, comfyFetch, comfyJson, withComfyUrl } from '@/server/compare';
 
 // Stop this comparison's queued images in ComfyUI. Cells that already had an image keep it.
 export async function POST(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   try {
     const pending = await prisma.compareCell.findMany({ where: { comparison_id: id, status: 'pending' } });
-    const ids = pending.map(c => c.comfy_id).filter((x): x is string => !!x);
-    if (ids.length) {
+    // each cell is cancelled on the ComfyUI it was sent to
+    const byServer = new Map<string, string[]>();
+    for (const c of pending) {
+      if (!c.comfy_id) continue;
+      const url = await cellComfyUrl(c.settings);
+      byServer.set(url, [...(byServer.get(url) ?? []), c.comfy_id]);
+    }
+    for (const [url, ids] of Array.from(byServer)) {
+      await withComfyUrl(url, async () => {
       try {
         const q = await comfyJson('/queue');
         await comfyFetch('/queue', {
@@ -21,6 +28,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       } catch {
         // Comfy down: nothing left to cancel there, just clean up our side
       }
+      });
     }
     for (const c of pending) {
       if (c.image_path) await prisma.compareCell.update({ where: { id: c.id }, data: { status: 'done', comfy_id: null } });

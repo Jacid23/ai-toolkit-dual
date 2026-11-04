@@ -22,7 +22,8 @@ export const Modal: React.FC<ModalProps> = ({
   // Close on ESC key press
   useEffect(() => {
     const handleEscKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && isOpen) {
+      // a field inside that used ESC itself (eg. cancelling an edit) calls preventDefault
+      if (e.key === 'Escape' && isOpen && !e.defaultPrevented) {
         onClose();
       }
     };

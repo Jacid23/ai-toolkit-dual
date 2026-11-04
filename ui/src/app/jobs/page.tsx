@@ -22,7 +22,8 @@ export default function Dashboard() {
           </Link>
         </div>
       </TopBar>
-      <MainContent>
+      {/* DUAL BUILD: the page doesn't scroll; the jobs list scrolls in its own card */}
+      <MainContent className="overflow-hidden">
         <JobsTable />
       </MainContent>
     </>

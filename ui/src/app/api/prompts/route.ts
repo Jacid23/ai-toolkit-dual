@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/server/prisma';
-import { promptOrderBy, relinkDatasets } from '@/server/promptLinks';
+import { promptOrderBy, relinkDatasets, removePromptImage } from '@/server/promptLinks';
 
 // Prompt library: saved test prompts used by the Compare page, the New Job sample
 // prompts, and the dedicated /prompts manager. Prompts carry an optional group and a
@@ -89,11 +89,14 @@ export async function DELETE(request: NextRequest) {
   const group = request.nextUrl.searchParams.get('group');
   if (group !== null) {
     if (!group.trim()) return NextResponse.json({ error: 'Missing group' }, { status: 400 });
+    const gone = await prisma.savedPrompt.findMany({ where: { group } as any, select: { id: true } });
     await prisma.savedPrompt.deleteMany({ where: { group } as any });
     await relinkDatasets(group, '');
+    await Promise.all(gone.map(p => removePromptImage(p.id)));
     return NextResponse.json({ ok: true });
   }
   if (!id) return NextResponse.json({ error: 'Missing id' }, { status: 400 });
   await prisma.savedPrompt.delete({ where: { id } }).catch(() => null);
+  await removePromptImage(id);
   return NextResponse.json({ ok: true });
 }

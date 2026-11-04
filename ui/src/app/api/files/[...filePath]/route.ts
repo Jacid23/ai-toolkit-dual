@@ -4,6 +4,7 @@ import fs from 'fs';
 import path from 'path';
 import { Readable } from 'stream';
 import { getDatasetsRoot, getTrainingFolder } from '@/server/settings';
+import { saveLocationRoots } from '@/server/jobFolders';
 import { catchAllToFilePath } from '@/server/catchAllPath';
 
 export async function GET(request: NextRequest, { params }: { params: { filePath: string | string[] } }) {
@@ -16,7 +17,8 @@ export async function GET(request: NextRequest, { params }: { params: { filePath
     // Get allowed directories
     const datasetRoot = await getDatasetsRoot();
     const trainingRoot = await getTrainingFolder();
-    const allowedDirs = [datasetRoot, trainingRoot];
+    // dual build: plus every job's own save location
+    const allowedDirs = [datasetRoot, trainingRoot, ...(await saveLocationRoots())];
 
     // Security check: resolve so `..` segments collapse, then verify still under
     // an allowed root. Substring `.includes('..')` false-positives on filenames

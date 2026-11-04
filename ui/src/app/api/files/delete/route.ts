@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import fs from 'fs';
 import path from 'path';
 import { getDatasetsRoot, getTrainingFolder } from '@/server/settings';
+import { saveLocationRoots } from '@/server/jobFolders';
 
 export async function POST(request: NextRequest) {
   try {
@@ -19,7 +20,7 @@ export async function POST(request: NextRequest) {
     // Get allowed directories
     const datasetRoot = await getDatasetsRoot();
     const trainingRoot = await getTrainingFolder();
-    const allowedDirs = [datasetRoot, trainingRoot];
+    const allowedDirs = [datasetRoot, trainingRoot, ...(await saveLocationRoots())];
 
     // Security check: resolve so `..` segments collapse, then verify still under
     // an allowed root. Substring `.includes('..')` false-positives on filenames

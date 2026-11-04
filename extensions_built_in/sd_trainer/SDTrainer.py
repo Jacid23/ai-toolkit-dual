@@ -158,7 +158,7 @@ class SDTrainer(BaseSDTrainProcess):
         if self.sample_config is not None and self.sample_config.samples is not None and len(self.sample_config.samples) > 0:
             # cache all the samples
             self.sd.sample_prompts_cache = []
-            sample_folder = os.path.join(self.save_root, 'samples')
+            sample_folder = os.path.join(self.meta_root, 'samples')
             output_path = os.path.join(sample_folder, 'test.jpg')
             for i in range(len(self.sample_config.prompts)):
                 sample_item = self.sample_config.samples[i]

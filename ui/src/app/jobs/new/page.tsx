@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
-import { defaultJobConfig, defaultDatasetConfig, migrateJobConfig } from './jobConfig';
+import { defaultJobConfig, defaultDatasetConfig, migrateJobConfig, withAllDualSettings } from './jobConfig';
 import { jobTypeOptions } from './options';
 import { JobConfig } from '@/types';
 import { objectCopy } from '@/utils/basic';
@@ -11,6 +11,7 @@ import { SelectInput } from '@/components/formInputs';
 import useSettings from '@/hooks/useSettings';
 import useGPUInfo from '@/hooks/useGPUInfo';
 import useDatasetList from '@/hooks/useDatasetList';
+import useJobDraft from '@/hooks/useJobDraft';
 import YAML from 'yaml';
 import path from 'path';
 import { TopBar, MainContent } from '@/components/layout';
@@ -52,6 +53,27 @@ export default function TrainingForm() {
   const jobDefaults = useJobDefaults();
   const openDefaultsApplied = useRef(false);
   const [defaultsStatus, setDefaultsStatus] = useState<string | null>(null);
+  const [jobLoaded, setJobLoaded] = useState(false); // the edited / cloned job has been fetched
+
+  // unsaved changes are kept as a draft in this browser, offered back on return
+  const draft = useJobDraft({
+    key: runId ? `edit:${runId}` : cloneId ? `clone:${cloneId}` : 'new',
+    ready:
+      isSettingsLoaded &&
+      isGPUInfoLoaded &&
+      isModelArchsLoaded &&
+      jobDefaults.isLoaded &&
+      (datasetFetchStatus === 'success' || datasetFetchStatus === 'error') &&
+      (runId || cloneId ? jobLoaded : openDefaultsApplied.current),
+    config: jobConfig,
+    gpuIDs,
+  });
+  const restoreDraft = () => {
+    const d = draft.restore();
+    if (!d) return;
+    setJobConfig(d.config);
+    setGpuIDs(d.gpuIDs);
+  };
 
   const flashDefaultsStatus = (msg: string) => {
     setDefaultsStatus(msg);
@@ -196,6 +218,7 @@ export default function TrainingForm() {
           const newJobConfig = migrateJobConfig(JSON.parse(data.job_config));
           newJobConfig.config.name = `${newJobConfig.config.name}_copy`;
           setJobConfig(newJobConfig);
+          setJobLoaded(true);
         })
         .catch(error => console.error('Error fetching training:', error));
     }
@@ -210,6 +233,7 @@ export default function TrainingForm() {
           console.log('Training:', data);
           setGpuIDs(data.gpu_ids);
           setJobConfig(migrateJobConfig(JSON.parse(data.job_config)));
+          setJobLoaded(true);
         })
         .catch(error => console.error('Error fetching training:', error));
     }
@@ -239,10 +263,11 @@ export default function TrainingForm() {
         id: runId,
         name: jobConfig.config.name,
         gpu_ids: gpuIDs,
-        job_config: jobConfig,
+        job_config: withAllDualSettings(jobConfig),
       })
       .then(res => {
         setStatus('success');
+        draft.clear();
         if (runId) {
           router.push(`/jobs/${runId}`);
         } else {
@@ -360,7 +385,11 @@ export default function TrainingForm() {
         <div className="pr-1 sm:pr-2 flex-shrink-0">
           <Button
             className="text-gray-200 bg-gray-800 px-2 sm:px-3 py-1 rounded-md text-xs sm:text-base"
-            onClick={() => setShowAdvancedView(!showAdvancedView)}
+            onClick={() => {
+              // list every dual-build setting in the YAML, not just the ones touched in the form
+              if (!showAdvancedView) setJobConfig((prev: JobConfig) => withAllDualSettings(prev));
+              setShowAdvancedView(!showAdvancedView);
+            }}
           >
             <span className="sm:hidden">{showAdvancedView ? 'Simple' : 'Advanced'}</span>
             <span className="hidden sm:inline">{showAdvancedView ? 'Show Simple' : 'Show Advanced'}</span>
@@ -412,6 +441,29 @@ export default function TrainingForm() {
         </div>
       ) : (
         <MainContent>
+          {draft.offer && (
+            <div className="mb-4 flex flex-wrap items-center gap-3 rounded-md border border-amber-800 bg-amber-950/50 px-4 py-2.5 text-sm text-amber-200">
+              <span className="flex-1 min-w-0">
+                Unsaved changes on this form from{' '}
+                {new Date(draft.offer.savedAt).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })}
+                {draft.offer.config?.config?.name ? ` (${draft.offer.config.config.name})` : ''}. Editing starts fresh.
+              </span>
+              <button
+                type="button"
+                onClick={restoreDraft}
+                className="rounded-md bg-amber-700 hover:bg-amber-600 text-white px-3 py-1 text-sm font-medium"
+              >
+                Restore
+              </button>
+              <button
+                type="button"
+                onClick={draft.discard}
+                className="rounded-md bg-gray-800 hover:bg-gray-700 text-gray-200 px-3 py-1 text-sm"
+              >
+                Discard
+              </button>
+            </div>
+          )}
           <ErrorBoundary
             fallback={
               <div className="flex items-center justify-center h-64 text-lg text-red-600 font-medium bg-red-100 dark:bg-red-900/20 dark:text-red-400 border border-red-300 dark:border-red-700 rounded-lg">
@@ -425,6 +477,7 @@ export default function TrainingForm() {
               status={status}
               handleSubmit={handleSubmit}
               runId={runId}
+              newJob={!runId && !cloneId}
               gpuIDs={gpuIDs}
               setGpuIDs={setGpuIDs}
               gpuList={gpuList}

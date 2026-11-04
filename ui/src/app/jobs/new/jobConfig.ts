@@ -126,6 +126,30 @@ export const defaultJobConfig: JobConfig = {
   },
 };
 
+// DUAL BUILD: settings the simple form only writes once you touch them, filled in with their
+// "off"/"blank" values so the Advanced YAML (and the saved config) always lists them. Never
+// overwrites a value that is already there; returns a copy.
+export const withAllDualSettings = (jobConfig: JobConfig): JobConfig => {
+  const cfg: JobConfig = JSON.parse(JSON.stringify(jobConfig));
+  const proc: any = cfg?.config?.process?.[0];
+  if (!proc) return cfg;
+  const fill = (obj: any, defaults: Record<string, any>) => {
+    for (const [k, v] of Object.entries(defaults)) if (obj[k] === undefined) obj[k] = v;
+  };
+  proc.model ??= {};
+  fill(proc.model, { multi_gpu_split: false });
+  proc.train ??= {};
+  fill(proc.train, { diff_output_preservation_triggers: '', diff_output_preservation_every: 1 });
+  proc.save ??= {};
+  fill(proc.save, { save_start_step: 0, save_schedule: [] });
+  proc.sample ??= {};
+  fill(proc.sample, { sample_schedule: [], comfy_sample: false, comfy_server: '', defer_samples: false });
+  // blank = the ComfyUI workflow's own choice; strength null = the workflow's own strength
+  proc.sample.comfy ??= {};
+  fill(proc.sample.comfy, { model: '', te: '', vae: '', sampler: '', scheduler: '', strength: null });
+  return cfg;
+};
+
 export const migrateJobConfig = (jobConfig: JobConfig): JobConfig => {
   // upgrade prompt strings to samples
   if (

@@ -58,7 +58,8 @@ const numWorkers = (() => {
 // changed at runtime from the UI in the Next.js process, so cache briefly
 // instead of forever.
 // ---------------------------------------------------------------------------
-type Roots = { datasets: string; training: string; data: string };
+// saveLocations: every job's own save location (dual build, New Job → Save Location)
+type Roots = { datasets: string; training: string; data: string; saveLocations: string[] };
 let rootsCache: { roots: Roots; ts: number } | null = null;
 
 async function getRoots(forceFresh = false): Promise<Roots> {
@@ -74,10 +75,18 @@ async function getRoots(forceFresh = false): Promise<Roots> {
     // otherwise make the `root + path.sep` prefix check fail on every file.
     return path.resolve(row?.value && row.value !== '' ? row.value : fallback);
   };
+  const saveLocations = new Set<string>();
+  for (const j of await prisma.job.findMany({ select: { job_config: true } })) {
+    try {
+      const v = JSON.parse(j.job_config)?.config?.process?.[0]?.save_location;
+      if (typeof v === 'string' && path.isAbsolute(v.trim())) saveLocations.add(path.resolve(v.trim()));
+    } catch {}
+  }
   const roots: Roots = {
     datasets: fromRow('DATASETS_FOLDER', defaultDatasetsFolder),
     training: fromRow('TRAINING_FOLDER', defaultTrainFolder),
     data: fromRow('DATA_ROOT', defaultDataRoot),
+    saveLocations: Array.from(saveLocations),
   };
   rootsCache = { roots, ts: Date.now() };
   return roots;
@@ -289,7 +298,10 @@ async function serveFile(req: http.IncomingMessage, res: http.ServerResponse, pr
 
     let resolvedFilePath = path.resolve(decodedFilePath);
     const checkAllowed = (roots: Roots) => {
-      const dirs = isImg ? [roots.datasets, roots.training, roots.data] : [roots.datasets, roots.training];
+      const dirs = [
+        ...(isImg ? [roots.datasets, roots.training, roots.data] : [roots.datasets, roots.training]),
+        ...roots.saveLocations,
+      ];
       return {
         dirs,
         allowed: dirs.some(

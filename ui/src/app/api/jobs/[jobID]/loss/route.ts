@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/server/prisma';
 import path from 'path';
 import fs from 'fs';
-import { getTrainingFolder } from '@/server/settings';
+import { jobMetaFolder } from '@/server/jobFolders';
 
 import sqlite3 from 'sqlite3';
 import zlib from 'zlib';
@@ -63,9 +63,7 @@ export async function GET(request: NextRequest, { params }: { params: { jobID: s
   const job = await prisma.job.findUnique({ where: { id: jobID } });
   if (!job) return NextResponse.json({ error: 'Job not found' }, { status: 404 });
 
-  const trainingFolder = await getTrainingFolder();
-  const jobFolder = path.join(trainingFolder, job.name);
-  const logPath = path.join(jobFolder, 'loss_log.db');
+  const logPath = path.join(await jobMetaFolder(job), 'loss_log.db');
 
   try {
     await fs.promises.access(logPath);
@@ -138,9 +136,7 @@ export async function DELETE(request: NextRequest, { params }: { params: { jobID
     return NextResponse.json({ error: 'min_step and max_step must be numbers with min_step <= max_step' }, { status: 400 });
   }
 
-  const trainingFolder = await getTrainingFolder();
-  const jobFolder = path.join(trainingFolder, job.name);
-  const logPath = path.join(jobFolder, 'loss_log.db');
+  const logPath = path.join(await jobMetaFolder(job), 'loss_log.db');
 
   try {
     await fs.promises.access(logPath);

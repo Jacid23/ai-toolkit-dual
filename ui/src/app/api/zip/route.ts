@@ -5,6 +5,8 @@ import fsp from 'fs/promises';
 import path from 'path';
 import archiver from 'archiver';
 import { getDatasetsRoot, getTrainingFolder } from '@/server/settings';
+import prisma from '@/server/prisma';
+import { META_DIR, jobRootOf } from '@/server/jobFolders';
 
 export const runtime = 'nodejs'; // ensure Node APIs are available
 export const dynamic = 'force-dynamic'; // long-running, non-cached
@@ -105,9 +107,11 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'jobName is required' }, { status: 400 });
     }
 
-    const trainingRoot = await resolveSafe(await getTrainingFolder());
-    const folderPath = await resolveSafe(path.join(trainingRoot, body.jobName, 'samples'));
-    const outputPath = path.resolve(trainingRoot, body.jobName, 'samples.zip');
+    // the job's own save location (dual build), else the Training Folder
+    const job = await prisma.job.findFirst({ where: { name: body.jobName } });
+    const trainingRoot = await resolveSafe(job ? await jobRootOf(job) : await getTrainingFolder());
+    const folderPath = await resolveSafe(path.join(trainingRoot, body.jobName, META_DIR, 'samples'));
+    const outputPath = path.resolve(trainingRoot, body.jobName, META_DIR, 'samples.zip');
 
     // Must be a directory
     let stat: fs.Stats;

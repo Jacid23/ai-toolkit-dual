@@ -43,6 +43,10 @@ class BaseTrainProcess(BaseProcess):
         self.training_folder = self.get_conf('training_folder',
                                              self.job.training_folder if hasattr(self.job, 'training_folder') else None)
         self.save_root = os.path.join(self.training_folder, self.name)
+        # DUAL BUILD: the job folder holds only LoRAs and their .webp thumbnails; everything else
+        # (config, logs, loss log, optimizer, samples, live-edit files) lives in <job>\config
+        self.meta_root = os.path.join(self.save_root, 'config')
+        os.makedirs(self.meta_root, exist_ok=True)
         self.step = 0
         self.first_step = 0
         self.log_dir = self.get_conf('log_dir', self.job.log_dir if hasattr(self.job, 'log_dir') else None)
@@ -73,7 +77,7 @@ class BaseTrainProcess(BaseProcess):
             self.writer = SummaryWriter(summary_dir)
 
     def save_training_config(self):
-        os.makedirs(self.save_root, exist_ok=True)
-        save_dif = os.path.join(self.save_root, f'config.yaml')
+        os.makedirs(self.meta_root, exist_ok=True)
+        save_dif = os.path.join(self.meta_root, f'config.yaml')
         with open(save_dif, 'w') as f:
             yaml.dump(self.job.raw_config, f)

@@ -2,7 +2,8 @@ import { NextResponse } from 'next/server';
 import fs from 'fs';
 import path from 'path';
 import prisma from '@/server/prisma';
-import { getModelsPath, getTrainingFolder } from '@/server/settings';
+import { getModelsPath } from '@/server/settings';
+import { jobOutputFolder } from '@/server/jobFolders';
 
 export const dynamic = 'force-dynamic';
 
@@ -56,7 +57,6 @@ const walk = async (root: string, rel = '', depth = 0, out: (LoraFile & { relpat
 // LoRA files available to the Generate page: every training job's saved
 // checkpoints, and everything under <MODELS_PATH>/loras.
 export async function GET() {
-  const trainingFolder = await getTrainingFolder();
   const jobs = await prisma.job.findMany({ where: { job_type: 'train' }, orderBy: { updated_at: 'desc' } });
   const jobEntries = (
     await Promise.all(
@@ -65,7 +65,7 @@ export async function GET() {
         name: job.name,
         status: job.status,
         updated_at: job.updated_at,
-        files: await listSafetensors(path.join(trainingFolder, job.name)),
+        files: await listSafetensors(await jobOutputFolder(job)),
       })),
     )
   ).filter(j => j.files.length > 0);

@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/server/prisma';
 import path from 'path';
 import fs from 'fs';
-import { getTrainingFolder } from '@/server/settings';
+import { jobFolder as findJobFolder } from '@/server/compare';
+import { META_DIR } from '@/server/jobFolders';
 
 export async function GET(request: NextRequest, { params }: { params: { jobID: string } }) {
   const { jobID } = await params;
@@ -15,8 +16,8 @@ export async function GET(request: NextRequest, { params }: { params: { jobID: s
     return NextResponse.json({ error: 'Job not found' }, { status: 404 });
   }
 
-  const trainingFolder = await getTrainingFolder();
-  const jobFolder = path.join(trainingFolder, job.name);
+  // its own folder, or where its checkpoints were moved (dual build)
+  const jobFolder = await findJobFolder(job);
 
   try {
     await fs.promises.access(jobFolder);
@@ -46,7 +47,7 @@ export async function GET(request: NextRequest, { params }: { params: { jobID: s
   );
 
   // include the optimizer state if it exists
-  const optimizerPath = path.join(jobFolder, 'optimizer.pt');
+  const optimizerPath = path.join(jobFolder, META_DIR, 'optimizer.pt');
   try {
     const stats = await fs.promises.stat(optimizerPath);
     fileObjects.push({

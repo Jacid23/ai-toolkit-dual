@@ -7,7 +7,7 @@ import fs from 'fs';
 import path from 'path';
 import type { Job } from '@prisma/client';
 import prisma from '@/server/prisma';
-import { getTrainingFolder } from '@/server/settings';
+import { jobMetaFolder } from '@/server/jobFolders';
 import {
   analyzeWorkflow,
   buildPrompt,
@@ -15,12 +15,19 @@ import {
   comfyFetch,
   comfyJson,
   getComfyUrl,
+  comfyServerUrl,
+  serverLabel,
   jobFolder,
   loadWorkflow,
+  pointSaveAt,
   scanFolder,
+  tiedWorkflow,
+  withComfyUrl,
   workflowValues,
 } from '@/server/compare';
 import { DEFAULT_COMPARE_SETTINGS } from '@/utils/compare';
+import { jobSamples } from '@/server/jobSamples';
+import { refreshThumbnailsSoon } from '@/server/thumbnails';
 
 export class SampleError extends Error {
   constructor(
@@ -40,15 +47,31 @@ const procOf = (job: Job): any => {
 };
 
 // the training UI reads samples from <training folder>/<job>/samples
-export const samplesFolderOf = async (job: Job) => path.join(await getTrainingFolder(), job.name, 'samples');
+export const samplesFolderOf = async (job: Job) => path.join(await jobMetaFolder(job), 'samples');
 
-// explicit > the job's own (legacy per-job pick) > Settings default
-export async function resolveSampleWorkflow(job: Job, explicit?: string | null): Promise<string> {
-  if (explicit) return explicit;
-  const own = procOf(job)?.sample?.comfy_workflow;
-  if (own) return own;
-  const row = await prisma.settings.findFirst({ where: { key: 'COMFY_SAMPLE_WORKFLOW' } });
-  return row?.value?.trim() || '';
+// The ComfyUI this job's training samples render on (Sample card → ComfyUI: default, or the
+// exact address picked). No fallback: one that isn't in Settings any more is an error.
+export async function jobComfyUrl(job: Job): Promise<string> {
+  try {
+    return await comfyServerUrl(procOf(job)?.sample?.comfy_server);
+  } catch (e: any) {
+    throw new SampleError(e?.message ?? String(e));
+  }
+}
+
+// The sample workflow is the one tied to the ComfyUI rendering (Settings), nothing else: no
+// per-job pick, no borrowing another ComfyUI's. Missing = an error that says which ComfyUI.
+async function loadSampleWorkflow(): Promise<{ workflow: string; api: any }> {
+  const workflow = await tiedWorkflow();
+  if (!workflow) {
+    const name = (await serverLabel(await getComfyUrl())) ?? 'this ComfyUI';
+    throw new SampleError(`No sample workflow set for ${name} (Settings).`);
+  }
+  try {
+    return { workflow, api: await loadWorkflow(workflow) };
+  } catch (e: any) {
+    throw new SampleError(`Workflow "${workflow}": ${e?.message ?? e}`);
+  }
 }
 
 // [trigger]/[name] become the trigger word, as the internal sampler does
@@ -96,17 +119,17 @@ async function latestCheckpoint(folder: string): Promise<string | null> {
   return stats[0].f;
 }
 
-// Can a sample run right now? Comfy reachable + the workflow loads and analyzes.
-export async function checkSampleReady(job: Job, explicitWorkflow?: string | null) {
-  const workflow = await resolveSampleWorkflow(job, explicitWorkflow);
-  if (!workflow) throw new SampleError('No ComfyUI sample workflow set (Settings → ComfyUI Sample Workflow).');
+// Can a sample run right now on the ComfyUI in scope? Reachable + its workflow loads and analyzes.
+export async function checkSampleReady() {
+  const url = await getComfyUrl();
   try {
     await comfyJson('/system_stats', { timeoutMs: 4000 });
   } catch {
-    throw new SampleError(`ComfyUI not reachable at ${await getComfyUrl()}`, 503);
+    throw new SampleError(`${(await serverLabel(url)) ?? 'ComfyUI'} not reachable at ${url}`, 503);
   }
+  const { workflow, api } = await loadSampleWorkflow();
   try {
-    await analyzeWorkflow(await loadWorkflow(workflow));
+    await analyzeWorkflow(api);
   } catch (e: any) {
     throw new SampleError(`Workflow "${workflow}": ${e?.message ?? e}`);
   }
@@ -117,7 +140,6 @@ export interface RenderOpts {
   checkpoint?: string | null; // a LoRA file; omitted = newest checkpoint, else base model
   base?: boolean; // force the base model (no LoRA)
   step?: number;
-  workflow?: string | null;
   prompts?: string[];
   strength?: number;
   seed?: number;
@@ -142,8 +164,6 @@ export async function renderTrainingSamples(job: Job, opts: RenderOpts) {
     if (checkpoint) step = stepFromCheckpoint(checkpoint) || step;
   }
 
-  const workflow = await resolveSampleWorkflow(job, opts.workflow);
-  if (!workflow) throw new SampleError('No ComfyUI sample workflow set (Settings → ComfyUI Sample Workflow).');
 
   const trigger: string = procOf(job)?.trigger_word ?? '';
   const prompts = (opts.prompts?.length ? opts.prompts : jobSamplePrompts(job)).map(p =>
@@ -153,7 +173,8 @@ export async function renderTrainingSamples(job: Job, opts: RenderOpts) {
 
   let api: any, map: any, s: any;
   try {
-    api = await loadWorkflow(workflow);
+    let workflow: string;
+    ({ workflow, api } = await loadSampleWorkflow());
     map = await analyzeWorkflow(api);
     const wv = await workflowValues(api, map); // the workflow's own values fill anything the job leaves blank
     s = { ...DEFAULT_COMPARE_SETTINGS, ...wv, ...jobComfySettings(job), workflow };
@@ -185,11 +206,19 @@ export async function renderTrainingSamples(job: Job, opts: RenderOpts) {
     ? Array.from(new Set(opts.indices)).filter(i => Number.isInteger(i) && i >= 0 && i < prompts.length)
     : prompts.map((_, i) => i);
   if (!order.length) throw new SampleError('No prompt for that sample slot (were prompts removed?)');
-  const submitted: { idx: number; comfyId: string }[] = [];
+  await fs.promises.mkdir(samplesFolder, { recursive: true });
+  const stepTag = String(step).padStart(9, '0');
+  // name by submission time + prompt index (not download time) to keep prompt order in the batch
+  const batchTs = Date.now();
+  // file: where a "Save for BasementUI" saver writes the image itself (null = download it after)
+  const submitted: { idx: number; comfyId: string; file: string | null }[] = [];
   const errors: string[] = [];
   for (const i of order) {
     try {
       const prompt = await buildPrompt(api, map, { loraPath: checkpoint, prompt: prompts[i] }, cellSettings(i));
+      const name = `${batchTs + i}__${stepTag}_${i}`;
+      const direct = pointSaveAt(prompt, path.dirname(samplesFolder), path.basename(samplesFolder), name);
+      const file = direct ? path.join(samplesFolder, `${name}.webp`) : null;
       const res = await comfyFetch('/prompt', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -197,23 +226,85 @@ export async function renderTrainingSamples(job: Job, opts: RenderOpts) {
       });
       const j = await res.json().catch(() => ({}));
       if (!res.ok || !j?.prompt_id) throw new Error(comfyErrorText(j) || `/prompt HTTP ${res.status}`);
-      submitted.push({ idx: i, comfyId: j.prompt_id });
+      submitted.push({ idx: i, comfyId: j.prompt_id, file });
     } catch (e: any) {
       errors.push(`prompt ${i}: ${e?.message ?? e}`);
     }
   }
   if (!submitted.length) throw new SampleError(`ComfyUI rejected all prompts: ${errors.join('; ')}`, 502);
 
-  // poll for completion + pull the images into samples/ (bounded)
-  await fs.promises.mkdir(samplesFolder, { recursive: true });
   const saved: string[] = [];
-  const stepTag = String(step).padStart(9, '0');
-  // name by submission time + prompt index (not download time) to keep prompt order in the batch
-  const batchTs = Date.now();
+  const remaining = new Map(submitted.map(x => [x.comfyId, x]));
+  const landed = async (comfyId: string, idx: number, file: string) => {
+    saved.push(file);
+    remaining.delete(comfyId);
+    await opts.onSaved?.(idx, file);
+    refreshThumbnailsSoon(job, idx);
+  };
+
+  if (submitted.some(x => x.file)) {
+    // ComfyUI writes the files itself: wait as long as it still holds the job (no download, and
+    // if aitk restarts meanwhile the images still land), giving up only when ComfyUI drops it,
+    // reports an error, or stays unreachable.
+    const capMs = Date.now() + 1000 * 60 * 60 * 6;
+    const lastSize = new Map<string, number>();
+    let unreachableSince = 0;
+    while (remaining.size && Date.now() < capMs) {
+      // queue first, then the files: a job gone from the queue has finished writing its file
+      let queued: Set<string> | null = null;
+      try {
+        const q = await comfyJson('/queue');
+        queued = new Set([...(q?.queue_running ?? []), ...(q?.queue_pending ?? [])].map((e: any) => e?.[1]));
+        unreachableSince = 0;
+      } catch {
+        unreachableSince ||= Date.now();
+        if (Date.now() - unreachableSince > 1000 * 60 * 10) {
+          for (const { idx } of Array.from(remaining.values())) errors.push(`job ${idx}: ComfyUI unreachable for 10 min`);
+          remaining.clear();
+          break;
+        }
+      }
+      for (const [comfyId, { idx, file }] of Array.from(remaining)) {
+        try {
+          if (!file) {
+            errors.push(`job ${idx}: no Save for BasementUI node to write the image`);
+            remaining.delete(comfyId);
+            continue;
+          }
+          const st = await fs.promises.stat(file).catch(() => null);
+          const inQueue = !queued || queued.has(comfyId);
+          if (st && st.size > 0) {
+            // done once ComfyUI let go of the job, or the file stopped growing
+            if (!inQueue || lastSize.get(comfyId) === st.size) await landed(comfyId, idx, file);
+            else lastSize.set(comfyId, st.size);
+            continue;
+          }
+          if (inQueue) continue; // still queued / rendering, or ComfyUI briefly unreachable
+          const h = (await comfyJson(`/history/${comfyId}`))?.[comfyId];
+          const err = (h?.status?.messages ?? []).find((m: any) => m?.[0] === 'execution_error')?.[1];
+          errors.push(
+            `job ${idx}: ` +
+              (err
+                ? `ComfyUI error in ${err.node_type ?? 'a node'}: ${err.exception_message ?? ''}`.trim()
+                : h
+                  ? `ComfyUI finished but wrote no ${path.basename(file)}`
+                  : 'ComfyUI dropped the job (restarted?)'),
+          );
+          remaining.delete(comfyId);
+        } catch (e: any) {
+          errors.push(`job ${idx}: ${e?.message ?? e}`);
+          remaining.delete(comfyId);
+        }
+      }
+      if (remaining.size) await new Promise(res => setTimeout(res, 2000));
+    }
+    return { ok: saved.length > 0, checkpoint, step, saved, pending: remaining.size, errors: errors.length ? errors : undefined };
+  }
+
+  // no direct saver in the workflow: poll for completion + pull the images into samples/ (bounded)
   const deadlineMs = Date.now() + 1000 * 60 * Math.min(20, Number(opts.timeoutMin) || 10);
-  const remaining = new Map(submitted.map(x => [x.comfyId, x.idx]));
   while (remaining.size && Date.now() < deadlineMs) {
-    for (const [comfyId, idx] of Array.from(remaining)) {
+    for (const [comfyId, { idx }] of Array.from(remaining)) {
       try {
         const h = (await comfyJson(`/history/${comfyId}`))?.[comfyId];
         if (!h) continue; // still queued or running
@@ -238,9 +329,7 @@ export async function renderTrainingSamples(job: Job, opts: RenderOpts) {
         const ext = path.extname(pick.filename) || '.png';
         const file = path.join(samplesFolder, `${batchTs + idx}__${stepTag}_${idx}${ext}`);
         await fs.promises.writeFile(file, Buffer.from(await r.arrayBuffer()));
-        saved.push(file);
-        remaining.delete(comfyId);
-        await opts.onSaved?.(idx, file);
+        await landed(comfyId, idx, file);
       } catch (e: any) {
         errors.push(`job ${idx}: ${e?.message ?? e}`);
         remaining.delete(comfyId);
@@ -268,9 +357,10 @@ export async function renderTrainingSamples(job: Job, opts: RenderOpts) {
 // its own slot as soon as it is saved, so nothing else for that step is touched.
 
 export type RegenItem = { step: number; idx: number };
+// server: the ComfyUI to render on (null = the main one, Settings → ComfyUI Address)
 type RegenState = {
-  pending: (RegenItem & { workflow?: string | null })[];
-  current: { step: number; indices: number[]; done: number[] } | null;
+  pending: (RegenItem & { server?: string | null })[];
+  current: { step: number; indices: number[]; done: number[]; server: string | null } | null;
   errors: string[];
   version: number; // bumps on every saved image, so pages know to reload the grid
   running: boolean;
@@ -304,7 +394,7 @@ export const isBackfilling = (jobId: string) => {
   return !!q && (q.running || q.pending.length > 0);
 };
 
-export function enqueueRegen(job: Job, items: RegenItem[], workflow?: string | null) {
+export function enqueueRegen(job: Job, items: RegenItem[], server?: string | null) {
   const q = regenState(job.id);
   const busy = new Set(q.pending.map(p => slotKey(p.step, p.idx)));
   for (const i of q.current?.indices ?? []) if (!q.current!.done.includes(i)) busy.add(slotKey(q.current!.step, i));
@@ -314,7 +404,7 @@ export function enqueueRegen(job: Job, items: RegenItem[], workflow?: string | n
     const k = slotKey(it.step, it.idx);
     if (busy.has(k)) continue;
     busy.add(k);
-    q.pending.push({ step: it.step, idx: it.idx, workflow: workflow ?? null });
+    q.pending.push({ step: it.step, idx: it.idx, server: server ?? null });
     added++;
   }
   if (added) void runRegenQueue(job.id);
@@ -335,19 +425,23 @@ async function runRegenQueue(jobId: string) {
   q.running = true;
   try {
     while (q.pending.length) {
-      const { step, workflow } = q.pending[0];
-      const batch = q.pending.filter(p => p.step === step && (p.workflow ?? null) === (workflow ?? null));
+      const { step, server = null } = q.pending[0];
+      const batch = q.pending.filter(
+        p => p.step === step && (p.server ?? null) === server,
+      );
       q.pending = q.pending.filter(p => !batch.includes(p));
       const indices = Array.from(new Set(batch.map(p => p.idx))).sort((a, b) => a - b);
-      q.current = { step, indices, done: [] };
+      q.current = { step, indices, done: [], server };
       try {
         // re-read the job so prompt / setting edits made since queueing are used
         const job = await prisma.job.findUnique({ where: { id: jobId } });
         if (!job) throw new Error('job was deleted');
-        const result = await renderSlots(job, step, indices, workflow, idx => {
-          q.current?.done.push(idx);
-          q.version++;
-        });
+        const result = await withComfyUrl(server, () =>
+          renderSlots(job, step, indices, idx => {
+            q.current?.done.push(idx);
+            q.version++;
+          }),
+        );
         for (const e of result.errors ?? []) q.errors.push(`step ${step.toLocaleString()}: ${e}`);
       } catch (e: any) {
         q.errors.push(`step ${step.toLocaleString()}: ${e?.message ?? e}`);
@@ -366,7 +460,6 @@ async function renderSlots(
   job: Job,
   step: number,
   indices: number[],
-  workflow: string | null | undefined,
   onSlotDone: (idx: number) => void,
 ) {
   const { files } = await scanFolder(await jobFolder(job)).catch(() => ({ files: [] as any[] }));
@@ -377,7 +470,6 @@ async function renderSlots(
     checkpoint: hit?.path ?? null,
     base: !hit,
     step,
-    workflow: workflow || null,
     indices,
     onSaved: async (idx, file) => {
       const names = await fs.promises.readdir(samplesFolder).catch(() => [] as string[]);
@@ -392,21 +484,17 @@ async function renderSlots(
 }
 
 // Every sample slot that should have an image but doesn't: each prompt at each checkpoint still
-// on disk, plus the step-0 baseline when the job samples before training. While the job is
-// running, its newest checkpoint is left out (the trainer's own sample for it is on the way).
+// on disk. The step-0 baseline is never counted as missing (it's optional). While the job is
+// running, its newest checkpoint is left out (the trainer's own sample for it is on the way),
+// unless the job defers its samples (Sample card → "Sample later"), where nothing is coming.
 export async function missingSamples(job: Job) {
   const count = jobSamplePrompts(job).length;
   const { files } = await scanFolder(await jobFolder(job)).catch(() => ({ files: [] as any[] }));
-  const train = procOf(job)?.train ?? {};
-  const steps: number[] = files.filter(f => f.step !== null).map(f => f.step as number);
-  if (job.status === 'running' && steps.length) steps.splice(steps.indexOf(Math.max(...steps)), 1);
-  if (!train.skip_first_sample && !train.disable_sampling && !steps.includes(0)) steps.unshift(0);
+  const steps: number[] = files.filter(f => f.step !== null && f.step !== 0).map(f => f.step as number);
+  const deferred = !!procOf(job)?.sample?.defer_samples;
+  if (job.status === 'running' && !deferred && steps.length) steps.splice(steps.indexOf(Math.max(...steps)), 1);
 
-  const have = new Set<string>();
-  for (const n of await fs.promises.readdir(await samplesFolderOf(job)).catch(() => [] as string[])) {
-    const m = n.match(SAMPLE_FILE_RE);
-    if (m) have.add(slotKey(parseInt(m[1], 10), parseInt(m[2], 10)));
-  }
+  const have = new Set((await jobSamples(job)).map(s => slotKey(s.step, s.idx)));
   const missing: RegenItem[] = [];
   for (const step of steps) for (let idx = 0; idx < count; idx++) if (!have.has(slotKey(step, idx))) missing.push({ step, idx });
   return {

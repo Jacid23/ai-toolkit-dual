@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/server/prisma';
 import path from 'path';
 import fs from 'fs';
-import { getTrainingFolder } from '@/server/settings';
+import { jobMetaFolder } from '@/server/jobFolders';
 
 // <time>__<step 9 digits>_<idx>.<ext>: order by step, then time, then prompt index, so samples
 // rendered later for an earlier step (ComfyUI backfill) land with that step
@@ -24,9 +24,7 @@ export async function GET(request: NextRequest, { params }: { params: { jobID: s
   }
 
   // setup the training
-  const trainingFolder = await getTrainingFolder();
-
-  const samplesFolder = path.join(trainingFolder, job.name, 'samples');
+  const samplesFolder = path.join(await jobMetaFolder(job), 'samples');
   try {
     await fs.promises.access(samplesFolder);
   } catch {

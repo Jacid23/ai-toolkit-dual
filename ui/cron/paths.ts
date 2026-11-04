@@ -27,6 +27,14 @@ export const getTrainingFolder = async () => {
   return trainingRoot as string;
 };
 
+// dual build: the folder a job's output folder is made in, its own save location (New Job → Save
+// Location, an absolute path) or else the Training Folder; same rule as src/server/jobFolders.ts
+export const getJobRoot = async (jobConfig: any) => {
+  const v = jobConfig?.config?.process?.[0]?.save_location;
+  if (typeof v === 'string' && path.isAbsolute(v.trim())) return path.resolve(v.trim());
+  return await getTrainingFolder();
+};
+
 export const getHFToken = async () => {
   const key = 'HF_TOKEN';
   let row = await prisma.settings.findFirst({

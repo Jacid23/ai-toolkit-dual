@@ -1239,7 +1239,7 @@ function GeneratePageInner() {
                       }
                     />
                   )}
-                  {(sample.guidance_scale ?? 4) > 1 && modality !== 'audio' && (
+                  {(sample.guidance_scale ?? 4) !== 1 && modality !== 'audio' && (
                     <TextAreaInput
                       label="Negative prompt"
                       value={sample.negative_prompt || ''}
@@ -1276,7 +1276,7 @@ function GeneratePageInner() {
                       label="Guidance"
                       value={sample.guidance_scale ?? 4}
                       onChange={v => setSample(s => ({ ...s, guidance_scale: v }))}
-                      min={1}
+                      min={0}
                       max={30}
                     />
                     <NumberInput

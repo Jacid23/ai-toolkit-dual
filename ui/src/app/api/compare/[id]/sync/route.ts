@@ -4,7 +4,7 @@ import path from 'path';
 import crypto from 'crypto';
 import prisma from '@/server/prisma';
 import { getDataRoot } from '@/server/settings';
-import { comfyFetch, comfyJson } from '@/server/compare';
+import { cellComfyUrl, comfyFetch, comfyJson, withComfyUrl } from '@/server/compare';
 
 const historyError = (h: any) => {
   const msg = (h?.status?.messages ?? []).find((m: any) => m?.[0] === 'execution_error')?.[1];
@@ -18,13 +18,22 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
   const queue = { running: 0, waiting: 0 };
   let comfyError: string | null = null;
 
-  if (pending.length) {
+  // cells sent to different ComfyUIs (Compare's server switch) are collected from their own one
+  const groups = new Map<string, typeof pending>();
+  for (const c of pending) {
+    const url = await cellComfyUrl(c.settings);
+    if (!groups.has(url)) groups.set(url, []);
+    groups.get(url)!.push(c);
+  }
+
+  for (const [url, group] of Array.from(groups)) {
+    await withComfyUrl(url, async () => {
     try {
       const q = await comfyJson('/queue');
       const running = new Set((q.queue_running ?? []).map((x: any[]) => x[1]));
       const waiting = new Set((q.queue_pending ?? []).map((x: any[]) => x[1]));
       const dir = path.join(await getDataRoot(), 'compare', id);
-      for (const c of pending) {
+      for (const c of group) {
         if (running.has(c.comfy_id)) {
           queue.running++;
           continue;
@@ -67,8 +76,9 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
         await prisma.compareCell.update({ where: { id: c.id }, data: { status: 'done', image_path: file, error: null } });
       }
     } catch (e: any) {
-      comfyError = e?.message ?? String(e);
+      comfyError = `${url}: ${e?.message ?? String(e)}`;
     }
+    });
   }
 
   const cells = await prisma.compareCell.findMany({

@@ -2,8 +2,8 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import classNames from 'classnames';
-import { Menu, MenuButton, MenuItem, MenuItems } from '@headlessui/react';
-import { Ellipsis, GripVertical, Loader2, Plus, RefreshCw, Trash2, X } from 'lucide-react';
+import { Menu, MenuButton, MenuItem, MenuItems, Popover, PopoverButton, PopoverPanel } from '@headlessui/react';
+import { Ellipsis, FolderX, GripVertical, ImageOff, Loader2, Pencil, Plus, RefreshCw, SlidersHorizontal, X } from 'lucide-react';
 import { TopBar } from '@/components/layout';
 import { apiClient } from '@/utils/api';
 import { openConfirm } from '@/components/ConfirmModal';
@@ -35,7 +35,22 @@ import {
 
 const errText = (e: any) => e?.response?.data?.error ?? e?.message ?? String(e);
 const segBtn = (on: boolean) =>
-  classNames('px-2.5 py-1 text-xs', on ? 'bg-gray-700 text-white' : 'bg-gray-800 text-gray-400 hover:text-gray-200');
+  classNames('flex-1 px-3 py-1.5 text-sm', on ? 'bg-gray-700 text-white' : 'bg-gray-800 text-gray-400 hover:text-gray-200');
+const plural = (n: number, word: string) => `${n.toLocaleString()} ${word}${n === 1 ? '' : 's'}`;
+const iconBtn = 'p-1.5 rounded-md text-gray-400 hover:text-gray-100 hover:bg-gray-800 transition-colors';
+const menuItem = 'block w-full text-left px-3 py-2 rounded-md text-sm hover:bg-gray-800';
+const btnPrimary =
+  'inline-flex items-center gap-1.5 rounded-md bg-slate-600 hover:bg-slate-500 text-gray-100 px-3 py-1.5 text-sm font-medium transition-colors disabled:opacity-50';
+const btnGhost =
+  'inline-flex items-center gap-1.5 rounded-md bg-gray-800 hover:bg-gray-700 text-gray-200 px-3 py-1.5 text-sm transition-colors disabled:opacity-50';
+
+// a training folder that can't be read, said plainly (the raw error stays in the tooltip)
+const runErrorText = (err: string) =>
+  /ENOENT|no such file|scandir/i.test(err)
+    ? "Can't find this training's folder. Is its drive connected, or was it moved?"
+    : /EACCES|EPERM/i.test(err)
+      ? "Can't read this training's folder (no permission)."
+      : err;
 
 export default function ComparePage() {
   const [list, setList] = useState<{ id: string; name: string }[]>([]);
@@ -56,6 +71,7 @@ export default function ComparePage() {
   const [addOpen, setAddOpen] = useState(false);
   const [viewer, setViewer] = useState<ImagePos | null>(null);
   const [rowCard, setRowCard] = useState<{ row: number; prompt: number } | null>(null);
+  const [renaming, setRenaming] = useState(false);
   const dirty = useRef(false);
   const dragFrom = useRef<number | null>(null);
   const syncing = useRef(false);
@@ -166,10 +182,13 @@ export default function ComparePage() {
   }, [runsSig, scan]);
 
   // ---------- ComfyUI ----------
+  // the comparison's server pick, read when talking to ComfyUI (main or Later Samples)
+  const serverRef = useRef<'main' | 'later'>('main');
+  serverRef.current = data?.settings.server === 'later' ? 'later' : 'main';
   const loadComfy = useCallback(
     async (workflow: string, apply: boolean) => {
       try {
-        const res = await apiClient.get('/api/compare/comfy', { params: { workflow } });
+        const res = await apiClient.get('/api/compare/comfy', { params: { workflow, server: serverRef.current } });
         setComfy(res.data);
         const v = res.data.values;
         if (apply && v) {
@@ -196,6 +215,23 @@ export default function ComparePage() {
       loadComfy(name, true);
     },
     [setSettings, loadComfy],
+  );
+  // each ComfyUI has its own workflow (Settings): switching server switches to it
+  const onServerChange = useCallback(
+    async (server: 'main' | 'later') => {
+      serverRef.current = server;
+      setComfy(null);
+      const res = await apiClient.get('/api/compare/comfy', { params: { server } }).catch(() => null);
+      const tied: string | null = res?.data?.tiedWorkflow ?? null;
+      if (tied && tied !== data?.settings.workflow) {
+        setSettings({ server, workflow: tied });
+        loadComfy(tied, true);
+      } else {
+        setSettings({ server });
+        loadComfy(data?.settings.workflow ?? '', false);
+      }
+    },
+    [setSettings, loadComfy, data?.settings.workflow],
   );
   useEffect(() => {
     if (current) loadComfy(data?.settings.workflow ?? '', false);
@@ -326,7 +362,10 @@ export default function ComparePage() {
     const errors: string[] = [];
     for (const run of jobs) {
       try {
-        const res = await apiClient.post(`/api/jobs/${run.jobId}/comfy_backfill`, { workflow: data.settings.workflow || null });
+        const res = await apiClient.post(`/api/jobs/${run.jobId}/comfy_backfill`, {
+          workflow: data.settings.workflow || null,
+          server: data.settings.server === 'later' ? 'later' : 'main',
+        });
         if (res.data.queued) parts.push(`${run.name}: ${res.data.queued} step${res.data.queued === 1 ? '' : 's'}`);
         else if (res.data.running) parts.push(`${run.name}: already filling`);
       } catch (e) {
@@ -364,6 +403,14 @@ export default function ComparePage() {
       next.splice(to, 0, m);
       return { ...d, runs: next };
     });
+  const renameComparison = (name: string) => {
+    setRenaming(false);
+    name = name.trim();
+    if (!current || !name || name === current.name) return;
+    setCurrent({ ...current, name });
+    setList(l => l.map(c => (c.id === current.id ? { ...c, name } : c)));
+    apiClient.put(`/api/compare/${current.id}`, { name }).catch(e => setNotice({ kind: 'error', text: errText(e) }));
+  };
   const deleteComparison = () => {
     if (!current) return;
     openConfirm({
@@ -410,159 +457,208 @@ export default function ComparePage() {
 
   return (
     <>
-      <TopBar>
-        <h1 className="text-base sm:text-lg mr-3">Compare</h1>
-        <select
-          value={current.id}
-          onChange={async e => {
-            if (e.target.value === '__new') await createComparison(`Comparison ${list.length + 1}`);
-            else await openComparison(e.target.value);
-          }}
-          className="bg-gray-800 border border-gray-700 rounded-md text-sm px-2 py-1 mr-2 max-w-[220px]"
-        >
-          {list.map(c => (
-            <option key={c.id} value={c.id}>
-              {c.name}
-            </option>
-          ))}
-          <option value="__new">+ New comparison…</option>
-        </select>
-        <input
-          value={current.name}
-          onChange={e => {
-            const name = e.target.value;
-            setCurrent({ ...current, name });
-            setList(l => l.map(c => (c.id === current.id ? { ...c, name } : c)));
-          }}
-          onBlur={() => apiClient.put(`/api/compare/${current.id}`, { name: current.name })}
-          title="Rename this comparison"
-          className="bg-transparent border border-transparent hover:border-gray-700 focus:border-gray-600 rounded px-1.5 py-0.5 text-sm w-48"
-        />
-        <button onClick={deleteComparison} title="Delete this comparison" className="p-1 ml-1 rounded text-gray-500 hover:text-red-400 hover:bg-gray-800">
-          <Trash2 className="w-4 h-4" />
-        </button>
-        <span className="ml-3 text-xs text-gray-500 hidden lg:inline">
-          {runs.length} trainings · {allFiles.length} checkpoints × {realPrompts.length} prompts = {totalCount} images
+      <TopBar className="gap-3 pr-4">
+        <h1 className="text-base sm:text-lg pl-2">Compare</h1>
+        {renaming ? (
+          <input
+            autoFocus
+            defaultValue={current.name}
+            onKeyDown={e => {
+              if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
+              if (e.key === 'Escape') setRenaming(false);
+            }}
+            onBlur={e => renameComparison(e.target.value)}
+            className="bg-gray-800 border border-gray-600 rounded-md px-2.5 py-1 text-sm w-56 focus:outline-none"
+          />
+        ) : (
+          <div className="flex items-center gap-1">
+            <select
+              value={current.id}
+              onChange={async e => {
+                if (e.target.value === '__new') await createComparison(`Comparison ${list.length + 1}`);
+                else await openComparison(e.target.value);
+              }}
+              title="Switch comparison"
+              className="bg-gray-800 border border-gray-700 rounded-md text-sm pl-2.5 pr-8 py-1 max-w-[240px]"
+            >
+              {list.map(c => (
+                <option key={c.id} value={c.id}>
+                  {c.name}
+                </option>
+              ))}
+              <option value="__new">+ New comparison…</option>
+            </select>
+            <button onClick={() => setRenaming(true)} title="Rename this comparison" className={iconBtn}>
+              <Pencil className="w-4 h-4" />
+            </button>
+          </div>
+        )}
+        <span className="hidden lg:inline-flex items-center rounded-full bg-gray-800 px-3 py-1 text-xs text-gray-300">
+          {plural(runs.length, 'training')} · {plural(allFiles.length, 'checkpoint')} · {plural(realPrompts.length, 'prompt')} ·{' '}
+          {plural(totalCount, 'image')}
         </span>
         <div className="flex-1" />
+        <Menu>
+          <MenuButton title="More" className={iconBtn}>
+            <Ellipsis className="w-5 h-5" />
+          </MenuButton>
+          <MenuItems anchor="bottom end" className="z-50 mt-1 w-56 bg-gray-900 border border-gray-700 rounded-lg p-1 shadow-lg">
+            <MenuItem>
+              <button className={menuItem} onClick={() => createComparison(`Comparison ${list.length + 1}`)}>
+                New comparison
+              </button>
+            </MenuItem>
+            <MenuItem>
+              <button className={menuItem} onClick={() => setRenaming(true)}>
+                Rename
+              </button>
+            </MenuItem>
+            <MenuItem>
+              <button className={classNames(menuItem, 'text-red-400')} onClick={deleteComparison}>
+                Delete comparison
+              </button>
+            </MenuItem>
+          </MenuItems>
+        </Menu>
       </TopBar>
 
       <div className="absolute top-12 left-0 right-0 bottom-0 flex">
-        <div className="flex-1 min-w-0 overflow-auto px-4 pb-6">
-          {/* prompt tabs (one training shows every prompt as a column instead) */}
-          <div className={classNames('flex gap-0.5 border-b border-gray-800 mb-2.5 overflow-x-auto pt-2', single && 'hidden')}>
-            {prompts.map((p, i) => {
-              const done = allFiles.filter(f => cellOf(f, p)?.status === 'done').length;
-              return (
-                <button
-                  key={i}
-                  onClick={() => setActivePrompt(i)}
-                  title={p}
-                  className={classNames(
-                    'flex flex-col items-start gap-0.5 min-w-[120px] max-w-[240px] px-3.5 pt-2 pb-1.5 border-b-2 text-left',
-                    activePrompt === i ? 'border-blue-500 bg-gray-900 text-white' : 'border-transparent text-gray-400 hover:bg-gray-900',
-                  )}
-                >
-                  <span className="flex w-full items-center gap-2 text-[13px] font-semibold">
-                    Prompt {i + 1}
-                    <span className={classNames('ml-auto text-[11px] font-normal', done < allFiles.length ? 'text-amber-400' : 'text-gray-500')}>
-                      {done}/{allFiles.length}
-                    </span>
-                  </span>
-                  <span className="w-full truncate text-[11px] text-gray-500">{p || '(empty)'}</span>
-                </button>
-              );
-            })}
-            <button
-              onClick={() => setActivePrompt(-1)}
-              className={classNames(
-                'flex flex-col justify-center px-3.5 pt-2 pb-1.5 border-b-2 text-left',
-                activePrompt === -1 ? 'border-blue-500 bg-gray-900 text-white' : 'border-transparent text-gray-400 hover:bg-gray-900',
-              )}
-            >
-              <span className="text-[13px] font-semibold">All prompts</span>
-              <span className="text-[11px] text-gray-500">side by side</span>
-            </button>
-            <button
-              onClick={() => update(d => ({ ...d, prompts: [...d.prompts, ''] }))}
-              title="Add prompt"
-              className="px-3 text-gray-400 hover:text-white hover:bg-gray-900"
-            >
-              <Plus className="w-4 h-4" />
-            </button>
-          </div>
-
-          {/* toolbar */}
-          <div className="flex flex-wrap items-center gap-2 mb-2 text-xs">
-            <button onClick={() => setAddOpen(true)} className="px-2.5 py-1 rounded-md bg-gray-800 border border-gray-700 hover:bg-gray-700 text-gray-200">
-              + Add training
-            </button>
-            <button
-              onClick={() => scan(data.runs)}
-              title="Re-read the training folders"
-              className="p-1.5 rounded-md text-gray-400 hover:text-white hover:bg-gray-800"
-            >
-              <RefreshCw className={classNames('w-3.5 h-3.5', scanning && 'animate-spin')} />
+        <div className="flex-1 min-w-0 overflow-auto p-4 pb-8">
+          {/* toolbar: actions left, view options right */}
+          <div className="flex flex-wrap items-center gap-2 mb-4">
+            <button onClick={() => setAddOpen(true)} className={btnPrimary}>
+              <Plus className="w-4 h-4" /> Add training
             </button>
             <button
               onClick={fillTrainingSamples}
               disabled={filling}
               title="Render the missing training samples (checkpoints with none, plus the step-0 baseline) on ComfyUI into each training's Samples tab"
-              className="px-2.5 py-1 rounded-md bg-gray-800 border border-gray-700 hover:bg-gray-700 text-gray-200 disabled:opacity-50 inline-flex items-center gap-1.5"
+              className={btnGhost}
             >
-              {filling && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+              {filling && <Loader2 className="w-4 h-4 animate-spin" />}
               Fill training samples
             </button>
-            <span className="text-gray-400 ml-2">Order</span>
-            <div className="inline-flex border border-gray-700 rounded-md overflow-hidden">
-              <button className={segBtn(order === 'asc')} onClick={() => update(d => ({ ...d, order: 'asc' }))}>
-                First → last
-              </button>
-              <button className={segBtn(order === 'desc')} onClick={() => update(d => ({ ...d, order: 'desc' }))}>
-                Newest first
-              </button>
-            </div>
-            <span className="text-gray-400 ml-2" title={Object.keys(CFG_LABELS).filter(k => !diffKeys.includes(k)).map(k => CFG_LABELS[k]).join(', ')}>
-              {diffKeys.length} differing settings shown · {Object.keys(CFG_LABELS).length - diffKeys.length} identical hidden
-            </span>
-            {data.excluded.length > 0 && (
-              <span className="text-gray-400">
-                · {data.excluded.length} checkpoint{data.excluded.length === 1 ? '' : 's'} removed{' '}
-                <button className="text-blue-400 hover:underline" onClick={() => update(d => ({ ...d, excluded: [] }))}>
-                  Restore
-                </button>
+            <button onClick={() => scan(data.runs)} title="Re-read the training folders" className={iconBtn}>
+              <RefreshCw className={classNames('w-4 h-4', scanning && 'animate-spin')} />
+            </button>
+            {(runs.length > 1 || data.excluded.length > 0) && (
+              <span className="ml-1 inline-flex items-center gap-1.5 rounded-full bg-gray-900 border border-gray-800 px-3 py-1 text-xs text-gray-400">
+                {runs.length > 1 && (
+                  <span title={`Identical: ${Object.keys(CFG_LABELS).filter(k => !diffKeys.includes(k)).map(k => CFG_LABELS[k]).join(', ')}`}>
+                    {plural(diffKeys.length, 'differing setting')} · {Object.keys(CFG_LABELS).length - diffKeys.length} identical hidden
+                  </span>
+                )}
+                {runs.length > 1 && data.excluded.length > 0 && <span>·</span>}
+                {data.excluded.length > 0 && (
+                  <span>
+                    {plural(data.excluded.length, 'checkpoint')} removed{' '}
+                    <button className="text-blue-400 hover:underline" onClick={() => update(d => ({ ...d, excluded: [] }))}>
+                      Restore
+                    </button>
+                  </span>
+                )}
               </span>
             )}
             <div className="flex-1" />
-            <span className="text-gray-400">Info</span>
-            <div className="inline-flex border border-gray-700 rounded-md overflow-hidden">
-              {(
-                [
-                  ['head', 'Column header'],
-                  ['cell', 'Under each image'],
-                  ['off', 'Hidden'],
-                ] as const
-              ).map(([m, label]) => (
-                <button key={m} className={segBtn(data.infoMode === m)} onClick={() => update(d => ({ ...d, infoMode: m }))}>
-                  {label}
-                </button>
-              ))}
-            </div>
-            <span className="text-gray-400 ml-2">Size</span>
-            <input
-              type="range"
-              min={100}
-              max={640}
-              value={data.minSize}
-              onChange={e => update(d => ({ ...d, minSize: Number(e.target.value) }))}
-              className="w-28"
-            />
+            <Popover className="relative">
+              <PopoverButton className={btnGhost}>
+                <SlidersHorizontal className="w-4 h-4" /> View
+              </PopoverButton>
+              <PopoverPanel anchor="bottom end" className="z-50 mt-2 w-72 rounded-lg border border-gray-700 bg-gray-900 p-4 shadow-xl space-y-4">
+                <div>
+                  <div className="text-xs text-gray-400 mb-1.5">Order</div>
+                  <div className="flex border border-gray-700 rounded-md overflow-hidden">
+                    <button className={segBtn(order === 'asc')} onClick={() => update(d => ({ ...d, order: 'asc' }))}>
+                      First → last
+                    </button>
+                    <button className={segBtn(order === 'desc')} onClick={() => update(d => ({ ...d, order: 'desc' }))}>
+                      Newest first
+                    </button>
+                  </div>
+                </div>
+                <div>
+                  <div className="text-xs text-gray-400 mb-1.5">Training settings</div>
+                  <div className="flex border border-gray-700 rounded-md overflow-hidden">
+                    {(
+                      [
+                        ['head', 'In header'],
+                        ['cell', 'Per image'],
+                        ['off', 'Hidden'],
+                      ] as const
+                    ).map(([m, label]) => (
+                      <button key={m} className={segBtn(data.infoMode === m)} onClick={() => update(d => ({ ...d, infoMode: m }))}>
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div>
+                  <div className="flex justify-between text-xs text-gray-400 mb-1.5">
+                    <span>Image size</span>
+                    <span className="tabular-nums">{data.minSize}px</span>
+                  </div>
+                  <input
+                    type="range"
+                    min={100}
+                    max={640}
+                    value={data.minSize}
+                    onChange={e => update(d => ({ ...d, minSize: Number(e.target.value) }))}
+                    className="w-full"
+                  />
+                </div>
+              </PopoverPanel>
+            </Popover>
           </div>
+
+          {/* prompt tabs (one training shows every prompt as a column instead) */}
+          {!single && runs.length > 0 && (
+            <div className="flex gap-1 mb-4 overflow-x-auto border-b border-gray-800">
+              {prompts.map((p, i) => {
+                const done = allFiles.filter(f => cellOf(f, p)?.status === 'done').length;
+                return (
+                  <button
+                    key={i}
+                    onClick={() => setActivePrompt(i)}
+                    title={p}
+                    className={classNames(
+                      'flex flex-col items-start gap-0.5 min-w-[140px] max-w-[260px] px-4 py-2 border-b-2 -mb-px text-left rounded-t-md transition-colors',
+                      activePrompt === i ? 'border-blue-500 bg-gray-900 text-white' : 'border-transparent text-gray-400 hover:bg-gray-900/60',
+                    )}
+                  >
+                    <span className="flex w-full items-center gap-2 text-sm font-medium">
+                      Prompt {i + 1}
+                      <span className={classNames('ml-auto text-xs font-normal tabular-nums', done < allFiles.length ? 'text-amber-400' : 'text-gray-500')}>
+                        {done}/{allFiles.length}
+                      </span>
+                    </span>
+                    <span className="w-full truncate text-xs text-gray-500">{p || '(empty)'}</span>
+                  </button>
+                );
+              })}
+              <button
+                onClick={() => setActivePrompt(-1)}
+                className={classNames(
+                  'flex flex-col justify-center px-4 py-2 border-b-2 -mb-px text-left rounded-t-md transition-colors',
+                  activePrompt === -1 ? 'border-blue-500 bg-gray-900 text-white' : 'border-transparent text-gray-400 hover:bg-gray-900/60',
+                )}
+              >
+                <span className="text-sm font-medium">All prompts</span>
+                <span className="text-xs text-gray-500">side by side</span>
+              </button>
+              <button
+                onClick={() => update(d => ({ ...d, prompts: [...d.prompts, ''] }))}
+                title="Add prompt"
+                className="px-3 text-gray-400 hover:text-white"
+              >
+                <Plus className="w-4 h-4" />
+              </button>
+            </div>
+          )}
 
           {notice && (
             <div
               className={classNames(
-                'mb-2 px-3 py-2 rounded-md text-sm flex items-start gap-2',
+                'mb-4 px-4 py-2.5 rounded-lg text-sm flex items-start gap-2',
                 notice.kind === 'error' ? 'bg-red-950/40 border border-red-900 text-red-300' : 'bg-gray-900 border border-gray-800 text-gray-300',
               )}
             >
@@ -574,82 +670,101 @@ export default function ComparePage() {
           )}
 
           {runs.length === 0 ? (
-            <div className="mt-10 mx-auto max-w-md text-center py-14 px-8 rounded-xl border-2 border-dashed border-gray-700 text-gray-400">
-              <div className="text-lg text-gray-200 mb-2">No trainings yet</div>
-              Use <b>+ Add training</b> to pick AITK trainings or any folder of LoRAs. Every LoRA in the folder becomes a row.
-            </div>
+            <EmptyState
+              icon={<Plus className="w-6 h-6" />}
+              title="No trainings yet"
+              body="Add AITK trainings or any folder of LoRAs. Every LoRA in a folder becomes a row, lined up by step."
+              action={
+                <button onClick={() => setAddOpen(true)} className={btnPrimary}>
+                  <Plus className="w-4 h-4" /> Add training
+                </button>
+              }
+            />
           ) : (
+            <>
             <div
-              className="grid gap-1"
-              style={{ gridTemplateColumns: `${single ? 64 : 36}px repeat(${runs.length * sub}, ${minW}px)` }}
+              className="grid gap-2"
+              style={{ gridTemplateColumns: `${single ? 72 : 44}px repeat(${runs.length * sub}, ${minW}px)` }}
             >
-              <div className="sticky left-0 top-0 z-[4] bg-gray-950 text-[11px] text-gray-500 flex items-end justify-center pb-1.5">
+              <div className="sticky left-0 top-0 z-[4] bg-gray-950 text-xs text-gray-500 flex items-end justify-center pb-2">
                 {single ? 'Step' : '#'}
               </div>
-              {runs.map((run, i) => (
-                <div
-                  key={runKey(data.runs[i])}
-                  className="sticky top-0 z-[3] bg-gray-950 pb-1"
-                  style={{ gridColumn: `span ${sub}` }}
-                  draggable
-                  onDragStart={() => (dragFrom.current = i)}
-                  onDragOver={e => e.preventDefault()}
-                  onDrop={() => {
-                    if (dragFrom.current !== null && dragFrom.current !== i) moveRun(dragFrom.current, i);
-                    dragFrom.current = null;
-                  }}
-                >
-                  <div className="h-full bg-gray-950 border border-gray-800 border-t-[3px] rounded-md px-2.5 py-2 text-xs" style={{ borderTopColor: runColor(i) }}>
-                    <div className={classNames('flex items-center gap-1.5', data.infoMode === 'head' && 'mb-1.5')}>
-                      <GripVertical className="w-3.5 h-3.5 text-gray-600 cursor-grab shrink-0" />
-                      <span className="grid place-items-center w-[18px] h-[18px] rounded text-[11px] font-bold text-white shrink-0" style={{ background: runColor(i) }}>
-                        {i + 1}
-                      </span>
-                      <span className="font-bold text-[13px] text-white truncate min-w-0" title={run.folder || run.name}>
-                        {run.name}
-                      </span>
-                      <span className="ml-auto text-gray-400 whitespace-nowrap">
-                        {scanMap[runKey(data.runs[i])] ? `${run.files.length} ckpts` : <Loader2 className="w-3.5 h-3.5 animate-spin" />}
-                      </span>
-                      <button onClick={() => removeRun(i)} title="Remove training" className="p-0.5 rounded text-gray-500 hover:text-red-400 hover:bg-gray-800 shrink-0">
-                        <X className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
-                    {run.error && <div className="text-red-400 mb-1">{run.error}</div>}
-                    {data.infoMode === 'head' && (
-                      <>
-                        <div className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-2 gap-y-0.5">
+              {runs.map((run, i) => {
+                const scanned = !!scanMap[runKey(data.runs[i])];
+                const showCfg = data.infoMode === 'head' && runs.length > 1;
+                return (
+                  <div
+                    key={runKey(data.runs[i])}
+                    className="sticky top-0 z-[3] bg-gray-950 pb-1"
+                    style={{ gridColumn: `span ${sub}` }}
+                    draggable={runs.length > 1}
+                    onDragStart={() => (dragFrom.current = i)}
+                    onDragOver={e => e.preventDefault()}
+                    onDrop={() => {
+                      if (dragFrom.current !== null && dragFrom.current !== i) moveRun(dragFrom.current, i);
+                      dragFrom.current = null;
+                    }}
+                  >
+                    <div className="group/run h-full bg-gray-900 border border-gray-800 border-t-[3px] rounded-lg px-3 py-2.5" style={{ borderTopColor: runColor(i) }}>
+                      <div className="flex items-center gap-2">
+                        {runs.length > 1 && <GripVertical className="w-4 h-4 text-gray-600 cursor-grab shrink-0" />}
+                        <span className="grid place-items-center w-5 h-5 rounded text-xs font-bold text-white shrink-0" style={{ background: runColor(i) }}>
+                          {i + 1}
+                        </span>
+                        <span className="font-semibold text-sm text-gray-100 truncate min-w-0" title={run.folder || run.name}>
+                          {run.name}
+                        </span>
+                        <span className="ml-auto shrink-0 rounded-full bg-gray-800 px-2 py-0.5 text-xs text-gray-400 tabular-nums">
+                          {scanned ? plural(run.files.length, 'checkpoint') : <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                        </span>
+                        <button
+                          onClick={() => removeRun(i)}
+                          title="Remove training from this comparison"
+                          className="p-1 rounded-md text-gray-500 hover:text-red-400 hover:bg-gray-800 shrink-0 opacity-0 group-hover/run:opacity-100 focus:opacity-100 transition-opacity"
+                        >
+                          <X className="w-4 h-4" />
+                        </button>
+                      </div>
+                      {run.error && (
+                        <div className="mt-2 flex items-start gap-1.5 text-sm text-red-300" title={run.error}>
+                          <FolderX className="w-4 h-4 mt-0.5 shrink-0" />
+                          {runErrorText(run.error)}
+                        </div>
+                      )}
+                      {showCfg && (
+                        <div className="mt-2 grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-0.5 text-xs">
                           {diffKeys.map(k => (
                             <div key={k} className="contents">
-                              <span className="text-gray-400 whitespace-nowrap">{CFG_LABELS[k]}</span>
-                              <span className="text-gray-100 truncate">{fmtCfg(run.cfg?.[k])}</span>
+                              <span className="text-gray-500 whitespace-nowrap">{CFG_LABELS[k]}</span>
+                              <span className="text-gray-200 truncate">{fmtCfg(run.cfg?.[k])}</span>
                             </div>
                           ))}
-                          {diffKeys.length === 0 && <span className="text-gray-500 col-span-2">No differences</span>}
+                          {diffKeys.length === 0 && <span className="text-gray-500 col-span-2">Same settings as the others</span>}
+                          {run.cfgSource === 'none' && scanned && (
+                            <span className="text-gray-500 col-span-2">Settings unknown for this folder</span>
+                          )}
                         </div>
-                        <div className="mt-1.5 text-[11px] text-gray-500">
-                          {Object.keys(CFG_LABELS).length - diffKeys.length} identical settings hidden
-                          {run.cfgSource === 'none' && scanMap[runKey(data.runs[i])] ? ' · settings unknown for this folder' : ''}
-                        </div>
-                      </>
-                    )}
+                      )}
+                    </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
               {single ? (
                 <>
                   <div />
                   {shownPrompts.map(pi => {
                     const done = allFiles.filter(f => cellOf(f, prompts[pi])?.status === 'done').length;
                     return (
-                      <div key={pi} className="px-1 pb-0.5 min-w-0" title={prompts[pi]}>
-                        <div className="flex items-center gap-2 text-[12px] font-semibold text-gray-200">
+                      <div key={pi} className="px-1 pt-1 pb-1 min-w-0" title={prompts[pi]}>
+                        <div className="flex items-center gap-2 text-sm font-medium text-gray-200">
                           Prompt {pi + 1}
-                          <span className={classNames('ml-auto text-[11px] font-normal', done < allFiles.length ? 'text-amber-400' : 'text-gray-500')}>
-                            {done}/{allFiles.length}
-                          </span>
+                          {allFiles.length > 0 && (
+                            <span className={classNames('ml-auto text-xs font-normal tabular-nums', done < allFiles.length ? 'text-amber-400' : 'text-gray-500')}>
+                              {done}/{allFiles.length}
+                            </span>
+                          )}
                         </div>
-                        <div className="text-[11px] text-gray-500 line-clamp-2 break-words">{prompts[pi] || '(empty)'}</div>
+                        <div className="mt-0.5 text-xs text-gray-500 line-clamp-2 break-words">{prompts[pi] || '(empty)'}</div>
                       </div>
                     );
                   })}
@@ -660,8 +775,8 @@ export default function ComparePage() {
                     <div />
                     {runs.map((_, ri) =>
                       shownPrompts.map(pi => (
-                        <div key={`${ri}-${pi}`} className="text-[11px] text-gray-500 px-1 truncate" title={prompts[pi]}>
-                          P{pi + 1} · {prompts[pi]}
+                        <div key={`${ri}-${pi}`} className="text-xs text-gray-500 px-1 truncate" title={prompts[pi]}>
+                          <span className="text-gray-300 font-medium">P{pi + 1}</span> · {prompts[pi]}
                         </div>
                       )),
                     )}
@@ -682,18 +797,18 @@ export default function ComparePage() {
                       const f = row.cells[ri];
                       if (!f) {
                         return (
-                          <div key={`${ri}-${pi}`} className="rounded border border-dashed border-gray-800 grid place-items-center text-gray-600 text-xs" style={{ aspectRatio: aspect }}>
+                          <div key={`${ri}-${pi}`} className="rounded-md border border-dashed border-gray-800 grid place-items-center text-gray-600 text-xs" style={{ aspectRatio: aspect }}>
                             —
                           </div>
                         );
                       }
                       const c = prompts[pi]?.trim() ? cellOf(f, prompts[pi]) : undefined;
                       return (
-                        <div key={`${ri}-${pi}`} className="flex flex-col gap-1">
+                        <div key={`${ri}-${pi}`} className="flex flex-col gap-1.5">
                           <div
                             className={classNames(
-                              'relative rounded overflow-hidden bg-gray-800',
-                              c?.image_path ? 'cursor-pointer hover:outline hover:outline-2 hover:outline-gray-500 -outline-offset-2' : '',
+                              'relative rounded-md overflow-hidden bg-gray-900 ring-1 ring-gray-800',
+                              c?.image_path ? 'cursor-pointer hover:ring-2 hover:ring-slate-500' : '',
                             )}
                             style={{ aspectRatio: aspect }}
                             onClick={() => c?.image_path && setViewer({ run: ri, row: r, prompt: pi })}
@@ -714,18 +829,18 @@ export default function ComparePage() {
                                 Failed — hover for why
                               </div>
                             )}
-                            {!c && <div className="absolute inset-0 grid place-items-center text-gray-500 text-xs">Not generated</div>}
+                            {!c && <div className="absolute inset-0 grid place-items-center text-gray-600 text-xs">Not generated</div>}
                             {!single && (
-                              <span className="absolute left-1 bottom-1 text-[10px] px-1.5 py-px rounded bg-gray-950/75 text-gray-300">
+                              <span className="absolute left-1.5 bottom-1.5 text-[11px] px-1.5 py-0.5 rounded bg-gray-950/80 text-gray-300 tabular-nums">
                                 #{ri + 1} · {fmtCfg(f.step?.toLocaleString())} steps
                               </span>
                             )}
                           </div>
                           {data.infoMode === 'cell' && (
-                            <div className="border border-gray-800 border-t-[3px] rounded-md px-2 py-1.5 text-xs" style={{ borderTopColor: runColor(ri) }}>
+                            <div className="bg-gray-900 border border-gray-800 border-t-[3px] rounded-md px-2.5 py-2 text-xs" style={{ borderTopColor: runColor(ri) }}>
                               <div className="flex gap-1.5 mb-1">
-                                <span className="font-bold text-white truncate">{run.name}</span>
-                                <span className="ml-auto text-gray-400 whitespace-nowrap">{fmtCfg(f.step?.toLocaleString())} steps</span>
+                                <span className="font-semibold text-gray-100 truncate">{run.name}</span>
+                                <span className="ml-auto text-gray-400 whitespace-nowrap tabular-nums">{fmtCfg(f.step?.toLocaleString())} steps</span>
                               </div>
                               <div className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-2">
                                 {diffKeys.map(k => (
@@ -744,6 +859,27 @@ export default function ComparePage() {
                 </RowLine>
               ))}
             </div>
+            {rows.length === 0 &&
+              data.runs.every(r => !!scanMap[runKey(r)]) &&
+              (runs.every(r => r.error) ? (
+                <EmptyState
+                  icon={<FolderX className="w-6 h-6" />}
+                  title={runs.length === 1 ? "This training's folder can't be read" : "These trainings' folders can't be read"}
+                  body="Check that the drive is connected and the folder is still there, then refresh."
+                  action={
+                    <button onClick={() => scan(data.runs)} className={btnGhost}>
+                      <RefreshCw className={classNames('w-4 h-4', scanning && 'animate-spin')} /> Refresh
+                    </button>
+                  }
+                />
+              ) : (
+                <EmptyState
+                  icon={<ImageOff className="w-6 h-6" />}
+                  title="No checkpoints yet"
+                  body="Rows appear as the trainings save LoRA files (.safetensors). A running training is picked up every minute."
+                />
+              ))}
+            </>
           )}
         </div>
 
@@ -758,6 +894,7 @@ export default function ComparePage() {
           }}
           comfy={comfy}
           onWorkflowChange={onWorkflowChange}
+          onServerChange={onServerChange}
           onSaveDefault={async () => {
             await apiClient.post('/api/compare/defaults', { settings: data.settings });
             setDefaults(data.settings);
@@ -808,6 +945,17 @@ export default function ComparePage() {
   );
 }
 
+function EmptyState({ icon, title, body, action }: { icon: React.ReactNode; title: string; body: string; action?: React.ReactNode }) {
+  return (
+    <div className="mt-6 mx-auto max-w-md text-center px-8 py-12 rounded-xl border border-dashed border-gray-700 bg-gray-900/40">
+      <div className="mx-auto mb-3 grid place-items-center w-12 h-12 rounded-full bg-gray-800 text-gray-400">{icon}</div>
+      <div className="text-base font-medium text-gray-100">{title}</div>
+      <p className="mt-1 text-sm text-gray-400">{body}</p>
+      {action && <div className="mt-5 flex justify-center">{action}</div>}
+    </div>
+  );
+}
+
 // the row-number cell plus the row's images; ⋯ opens the row actions
 function RowLine({
   label,
@@ -828,9 +976,9 @@ function RowLine({
       <div
         onClick={onOpen}
         title="Open this row as a card"
-        className="group sticky left-0 z-[2] flex flex-col items-center justify-center gap-1 bg-gray-900 border border-gray-800 hover:border-blue-500 rounded-md cursor-pointer"
+        className="group sticky left-0 z-[2] flex flex-col items-center justify-center gap-1 bg-gray-900 border border-gray-800 hover:border-slate-500 rounded-md cursor-pointer"
       >
-        <b className="text-[13px] text-gray-300">{label}</b>
+        <b className="text-sm font-semibold text-gray-300 tabular-nums">{label}</b>
         <Menu>
           <MenuButton
             onClick={(e: React.MouseEvent) => e.stopPropagation()}

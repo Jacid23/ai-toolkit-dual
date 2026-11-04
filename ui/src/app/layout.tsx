@@ -14,6 +14,7 @@ import SafetensorsInfoModal from '@/components/SafetensorsInfoModal';
 import UpsamplePromptsModal from '@/components/UpsamplePromptsModal';
 import PromptBoxEditorModal from '@/components/PromptBoxEditorModal';
 import PromptLibraryModal from '@/components/PromptLibraryModal';
+import QuickSettingModal from '@/components/QuickSettingModal';
 
 export const dynamic = 'force-dynamic';
 
@@ -55,7 +56,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <script dangerouslySetInnerHTML={{ __html: `window.server_platform = "${platform}";` }} />
         <ThemeProvider>
           <AuthWrapper authRequired={authRequired}>
-            <div className="flex h-screen bg-gray-950">
+            {/* overflow-hidden: a wide page (eg. Compare's grid) scrolls inside <main>, never the
+                whole window sideways, which pushed the sidebar off the left edge */}
+            <div className="flex h-screen bg-gray-950 overflow-hidden">
               <Sidebar />
               <main className="flex-1 overflow-auto bg-gray-950 text-gray-100 relative">
                 <Suspense>{children}</Suspense>
@@ -71,6 +74,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <UpsamplePromptsModal />
         <PromptBoxEditorModal />
         <PromptLibraryModal />
+        <QuickSettingModal />
       </body>
     </html>
   );

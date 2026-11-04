@@ -1,8 +1,9 @@
 import fs from 'fs';
 import path from 'path';
 import prisma from '@/server/prisma';
-import { getDatasetsRoot, getTrainingFolder } from '@/server/settings';
+import { getDataRoot, getDatasetsRoot, getTrainingFolder } from '@/server/settings';
 import { jobSamplePrompts } from '@/server/comfySamples';
+import { jobSamples } from '@/server/jobSamples';
 
 // DUAL BUILD: what the Prompt Library shows around its prompts: which datasets link to each
 // group (the .aitk_prompts.json written by api/datasets/prompt_link) and the latest training
@@ -48,12 +49,40 @@ export async function relinkDatasets(from: string, to: string) {
 
 export const normalizePrompt = (t: string) => t.replace(/\s+/g, ' ').trim().toLowerCase();
 
+// an image the user uploaded for a prompt, shown instead of its latest training sample:
+// <data root>/prompt_images/<prompt id>__<upload time>.<ext> (the time keeps a replaced image
+// from being served from the browser cache)
+export async function promptImagesDir() {
+  return path.join(await getDataRoot(), 'prompt_images');
+}
+
+export async function promptImages(): Promise<Record<string, string>> {
+  const dir = await promptImagesDir();
+  const out: Record<string, string> = {};
+  let names: string[] = [];
+  try {
+    names = await fs.promises.readdir(dir);
+  } catch {
+    return out;
+  }
+  for (const n of names.sort()) {
+    const id = n.split('__')[0];
+    if (id && n.includes('__')) out[id] = path.join(dir, n); // sorted, so the newest wins
+  }
+  return out;
+}
+
+export async function removePromptImage(id: string) {
+  const dir = await promptImagesDir();
+  const names = await fs.promises.readdir(dir).catch(() => [] as string[]);
+  await Promise.all(names.filter(n => n.startsWith(`${id}__`)).map(n => fs.promises.unlink(path.join(dir, n)).catch(() => {})));
+}
+
 export type PromptSample = { path: string; jobId: string; jobName: string; step: number; jobs: number };
 
 // newest sample image per prompt text, across every job's samples folder; a job's slot idx maps
 // to its current sample prompts, so files from prompts that were since edited can be mislabeled
 export async function latestSamplesByPrompt(): Promise<Record<string, PromptSample>> {
-  const training = await getTrainingFolder();
   const jobs = await prisma.job.findMany();
   const best: Record<string, PromptSample & { ts: number }> = {};
   const jobSets: Record<string, Set<string>> = {};
@@ -61,28 +90,13 @@ export async function latestSamplesByPrompt(): Promise<Record<string, PromptSamp
     jobs.map(async job => {
       const prompts = jobSamplePrompts(job).map(normalizePrompt);
       if (!prompts.length) return;
-      let files: string[] = [];
-      try {
-        files = await fs.promises.readdir(path.join(training, job.name, 'samples'));
-      } catch {
-        return;
-      }
-      for (const file of files) {
-        const m = file.match(/^(\d+)__(\d+)_(\d+)\.(png|jpe?g|webp)$/i);
-        if (!m) continue;
-        const key = prompts[parseInt(m[3], 10)];
+      // its samples\ folder, plus a moved training's samples (Settings → Moved Outputs Folder)
+      for (const s of await jobSamples(job)) {
+        const key = prompts[s.idx];
         if (!key) continue;
         (jobSets[key] ??= new Set()).add(job.id);
-        const ts = parseInt(m[1], 10);
-        if (best[key] && best[key].ts >= ts) continue;
-        best[key] = {
-          ts,
-          path: path.join(training, job.name, 'samples', file),
-          jobId: job.id,
-          jobName: job.name,
-          step: parseInt(m[2], 10),
-          jobs: 0,
-        };
+        if (best[key] && best[key].ts >= s.ts) continue;
+        best[key] = { ts: s.ts, path: s.path, jobId: job.id, jobName: job.name, step: s.step, jobs: 0 };
       }
     }),
   );

@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import fs from 'fs';
 import path from 'path';
 import { getDatasetsRoot, getTrainingFolder } from '@/server/settings';
+import { saveLocationRoots } from '@/server/jobFolders';
 
 // safetensors header: u64 LE byte length, then that many bytes of JSON.
 const MAX_HEADER_BYTES = 256 * 1024 * 1024;
@@ -27,7 +28,7 @@ export async function POST(request: NextRequest) {
     const decodedFilePath = decodeURIComponent(filePath);
     const datasetRoot = await getDatasetsRoot();
     const trainingRoot = await getTrainingFolder();
-    const allowedDirs = [datasetRoot, trainingRoot];
+    const allowedDirs = [datasetRoot, trainingRoot, ...(await saveLocationRoots())];
 
     const resolvedFilePath = path.resolve(decodedFilePath);
     const isAllowed = allowedDirs.some(
