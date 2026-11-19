@@ -3,6 +3,7 @@ import prisma from '@/server/prisma';
 import path from 'path';
 import fs from 'fs';
 import { jobMetaFolder } from '@/server/jobFolders';
+import { isCompleteImage } from '@/server/completeImage';
 
 // <time>__<step 9 digits>_<idx>.<ext>: order by step, then time, then prompt index, so samples
 // rendered later for an earlier step (ComfyUI backfill) land with that step
@@ -34,9 +35,13 @@ export async function GET(request: NextRequest, { params }: { params: { jobID: s
   // find all img (png, jpg, jpeg) files in the samples folder. Thumbnails
   // live in the hidden .thumbs subfolder (and partial writes in .tmp) — the
   // isFile check keeps those directories out even if their names ever match.
-  const names = (await fs.promises.readdir(samplesFolder, { withFileTypes: true }))
-    .filter(entry => entry.isFile())
-    .map(entry => entry.name);
+  // dual build: hidden files (a saver's .pending-… temp file) and images still being written stay
+  // out until they're whole
+  const entries = (await fs.promises.readdir(samplesFolder, { withFileTypes: true })).filter(
+    entry => entry.isFile() && !entry.name.startsWith('.'),
+  );
+  const whole = await Promise.all(entries.map(entry => isCompleteImage(path.join(samplesFolder, entry.name))));
+  const names = entries.filter((_, i) => whole[i]).map(entry => entry.name);
   const isMedia = (file: string) =>
     file.endsWith('.png') ||
     file.endsWith('.jpg') ||

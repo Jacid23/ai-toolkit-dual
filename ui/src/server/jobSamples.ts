@@ -3,6 +3,7 @@
 import fs from 'fs';
 import path from 'path';
 import { jobMetaFolder } from '@/server/jobFolders';
+import { isCompleteImage } from '@/server/completeImage';
 
 export type FoundSample = { path: string; step: number; idx: number; ts: number };
 
@@ -13,5 +14,7 @@ export async function jobSamples(job: { name: string; job_config?: string | null
     const m = f.match(/^(\d+)__(\d+)_(\d+)\.(png|jpe?g|webp)$/i);
     if (m) out.push({ path: path.join(folder, f), ts: parseInt(m[1], 10), step: parseInt(m[2], 10), idx: parseInt(m[3], 10) });
   }
-  return out;
+  // one still being written isn't a sample yet
+  const whole = await Promise.all(out.map(s => isCompleteImage(s.path)));
+  return out.filter((_, i) => whole[i]);
 }

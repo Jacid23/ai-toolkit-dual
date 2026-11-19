@@ -8,7 +8,6 @@ export type JobFileInfo = {
   size: number;
   firstLora: number | null;
   lastLora: number | null;
-  finalAt: number | null;
   ckptSize: number | null; // one LoRA's size (the newest checkpoint)
   hasSamples: boolean;
 };
@@ -111,7 +110,7 @@ export const datasetOf = (r: Row) =>
     .filter(Boolean)
     .join(', ');
 export const finishedOf = (r: Row) =>
-  r.job.status === 'completed' ? (r.info?.finalAt ?? r.info?.lastLora ?? null) : null;
+  r.job.status === 'completed' ? (r.info?.lastLora ?? null) : null;
 const ts = (d: any) => (d ? new Date(d).getTime() : null);
 export const createdOf = (r: Row) => ts(r.job.created_at);
 export const valueAt = (r: Row, path: string) =>

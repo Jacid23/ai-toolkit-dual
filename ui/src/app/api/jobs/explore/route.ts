@@ -1,4 +1,4 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import path from 'path';
 import fs from 'fs';
 import prisma from '@/server/prisma';
@@ -7,7 +7,7 @@ import { jobOutputFolder, jobRootOf } from '@/server/jobFolders';
 
 // DUAL BUILD: what the Jobs explorer shows beside each training that only its folder knows:
 // its group (the folder it saves in, relative to the Training Folder), its LoRAs (count, size,
-// first and newest file time, the final save's time) and whether it has samples.
+// first and newest file time) and whether it has samples.
 export type JobFileInfo = {
   group: string; // 'Krea2/Lexi'; '' = straight in the Training Folder; an outside folder = its full path
   folderExists: boolean;
@@ -15,7 +15,6 @@ export type JobFileInfo = {
   size: number;
   firstLora: number | null;
   lastLora: number | null;
-  finalAt: number | null; // <name>.safetensors, written when the job finished
   ckptSize: number | null; // one LoRA's size (the newest checkpoint)
   hasSamples: boolean;
 };
@@ -35,7 +34,6 @@ async function infoOf(job: { name: string; job_config: string }, trainingFolder:
     size: 0,
     firstLora: null,
     lastLora: null,
-    finalAt: null,
     ckptSize: null,
     hasSamples: false,
   };
@@ -53,7 +51,6 @@ async function infoOf(job: { name: string; job_config: string }, trainingFolder:
         out.size += st.size;
         out.firstLora = out.firstLora === null ? st.mtimeMs : Math.min(out.firstLora, st.mtimeMs);
         out.lastLora = out.lastLora === null ? st.mtimeMs : Math.max(out.lastLora, st.mtimeMs);
-        if (n === `${job.name}.safetensors`) out.finalAt = st.mtimeMs;
         if (st.mtimeMs > newest) {
           newest = st.mtimeMs;
           out.ckptSize = st.size;
@@ -65,8 +62,10 @@ async function infoOf(job: { name: string; job_config: string }, trainingFolder:
   return out;
 }
 
-export async function GET() {
-  if (cache && Date.now() - cache.at < 15000) return NextResponse.json({ jobs: cache.data });
+// ?fresh=1 skips the cache (after a rescan moved jobs)
+export async function GET(request: NextRequest) {
+  const fresh = request.nextUrl.searchParams.get('fresh') === '1';
+  if (!fresh && cache && Date.now() - cache.at < 15000) return NextResponse.json({ jobs: cache.data });
   const trainingFolder = await getTrainingFolder();
   const jobs = await prisma.job.findMany({
     where: { job_type: 'train' },

@@ -23,7 +23,7 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
   for (const s of all) if (s.step === step && (!newest.has(s.idx) || s.ts > newest.get(s.idx)!.ts)) newest.set(s.idx, s);
   const prompts = jobSamplePrompts(job);
 
-  // the newest LoRA's step: its _<step> in the name, the final save = the job's total steps
+  // the newest LoRA's step (the _<step> in its name)
   let total = 0;
   try {
     total = Number(JSON.parse(job.job_config)?.config?.process?.[0]?.train?.steps) || 0;
@@ -33,7 +33,7 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
   for (const n of names) {
     if (!n.toLowerCase().endsWith('.safetensors')) continue;
     const m = n.match(/_(\d+)\.safetensors$/i);
-    lastLora = Math.max(lastLora, m ? parseInt(m[1], 10) : n === `${job.name}.safetensors` ? total : 0);
+    if (m) lastLora = Math.max(lastLora, parseInt(m[1], 10));
   }
 
   return NextResponse.json({

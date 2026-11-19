@@ -1,8 +1,8 @@
 """DUAL BUILD: convert training folders to the layout AITK uses, and link each to its job.
 
     <folder>\\<name>\\
-      <name>.safetensors, <name>_<step 9 digits>.safetensors      LoRAs
-      <name>.webp, <name>_<step>.webp                             thumbnails
+      <name>_<step 9 digits>.safetensors                          LoRAs (the last one too)
+      <name>_<step>.webp                                          thumbnails
       <lora>.metadata.json                                        LoRA Manager's, left as they are
       config\\  .job_config.json, config.yaml, log.txt, logs\\, loss_log.db, optimizer.pt, notes.md,
                samples\\<time>__<step>_<prompt #>.<ext>, and everything else that was in the folder
@@ -12,7 +12,8 @@ Handles both old layouts:
   - AItoolLoraMaster.ps1's (config\\<name>_job_config.json, config\\samples\\sample_<#>\\<name>_<step>.png
     + .preview.jpeg/.thumb.jpg, <name>_<step>.png previews beside the LoRAs, grids, batch_config.txt)
 Script extras (previews, thumbs, grids, batch_config, the .ps1, prune50_safety.txt) go to config\\legacy.
-Nothing is deleted.
+The unnumbered final LoRA <name>.safetensors gets its step (from its training_info, else the job's
+train.steps) like every other save; Compare's paths to it follow. Nothing is deleted.
 
 The folder's name is the training's name. Its job in AITK (found by the aitk_job_id in its
 job_config, else by name) is pointed at the folder (Save Location = the folder it's in) and renamed
@@ -33,6 +34,7 @@ import os
 import re
 import shutil
 import sqlite3
+import struct
 import sys
 import time
 import uuid
@@ -56,6 +58,7 @@ AITK_SAMPLE = re.compile(r'^\d+__\d+_\d+\.(webp|png|jpe?g|mp4|mp3|wav|flac|ogg|t
 class Plan:
     def __init__(self, folder, dry):
         self.folder, self.dry, self.lines = folder, dry, []
+        self.renamed = []  # (old, new) LoRA paths, for Compare
 
     def log(self, msg):
         self.lines.append(msg)
@@ -165,6 +168,27 @@ def convert_files(folder, plan):
             else:
                 plan.move(p, os.path.join(meta, f))
             continue
+        if f == f'{name}.safetensors':
+            # the unnumbered final LoRA gets its step like every other save
+            step = saved_step(p)
+            if step is None:
+                try:
+                    step = int(job_config_of(folder)['config']['process'][0]['train']['steps'])
+                except Exception:
+                    step = None
+            numbered = f'{name}_{step:09d}.safetensors' if step else None
+            if numbered is None:
+                plan.log(f'kept  {f} (no step in it or the job config)')
+            elif os.path.exists(os.path.join(folder, numbered)):
+                plan.log(f'{numbered} already exists; {f} goes to config\\legacy')
+                plan.move(p, os.path.join(legacy, f))
+            else:
+                plan.move(p, os.path.join(folder, numbered))
+                plan.renamed.append((p, os.path.join(folder, numbered)))
+                meta_json = p[: -len('.safetensors')] + '.metadata.json'
+                if os.path.exists(meta_json):
+                    plan.move(meta_json, os.path.join(folder, numbered[: -len('.safetensors')] + '.metadata.json'))
+            continue
         m = ckpt.match(f)
         if m:
             padded = f'{name}_{int(m.group(1)):09d}.safetensors'
@@ -215,6 +239,18 @@ def convert_files(folder, plan):
             plan.move(p, os.path.join(samples, f'{ts}__{int(sm.group(1)):09d}_{idx}.{sm.group(2).lower()}'))
         if not plan.dry and os.path.isdir(sub) and not os.listdir(sub):
             os.rmdir(sub)
+
+
+def saved_step(path):
+    """The step a LoRA was saved at, from its safetensors header (training_info.step), else None."""
+    try:
+        with open(path, 'rb') as fh:
+            n = struct.unpack('<Q', fh.read(8))[0]
+            info = json.loads(fh.read(n)).get('__metadata__', {}).get('training_info')
+        step = json.loads(info).get('step') if isinstance(info, str) else None
+        return int(step) if step is not None else None
+    except Exception:
+        return None
 
 
 def job_config_of(folder):
@@ -281,14 +317,14 @@ def find_job(folder, cfg, db, history, claimed):
 
 
 def link_job(folder, plan, db, found):
-    """Point the folder's AITK job at it (or add one back); returns (thumbnail prompt, last step)."""
+    """Point the folder's AITK job at it (or add one back); returns its thumbnail prompt."""
     name = os.path.basename(folder)
     parent = os.path.dirname(folder)
     meta = os.path.join(folder, META)
     cfg_file, cfg = read_job_config(meta)
     if cfg is None:
         plan.log('no job_config in config\\: not linked to a job')
-        return 0, None
+        return 0
     row = db.execute("SELECT value FROM Settings WHERE key='TRAINING_FOLDER'").fetchone()
     training_folder = os.path.normcase(os.path.abspath(row[0])) if row and row[0] else ''
     save_location = '' if os.path.normcase(parent) == training_folder else parent
@@ -362,11 +398,19 @@ def link_job(folder, plan, db, found):
         prompt = int((proc.get('sample') or {}).get('thumbnail_prompt', 0) or 0)
     except Exception:
         prompt = 0
-    try:
-        last = int((proc.get('train') or {}).get('steps') or 0) or None
-    except Exception:
-        last = None
-    return prompt, last
+    return prompt
+
+
+def relink_compare(db, plan):
+    """Point Compare's cells and comparisons at the LoRAs this run renamed."""
+    for old, new in plan.renamed:
+        n = db.execute('UPDATE CompareCell SET lora_path = ? WHERE lora_path = ?', (new, old)).rowcount
+        o, w = json.dumps(old)[1:-1], json.dumps(new)[1:-1]
+        for cid, data in db.execute('SELECT id, data FROM Comparison WHERE instr(data, ?) > 0', (o,)).fetchall():
+            db.execute('UPDATE Comparison SET data = ? WHERE id = ?', (data.replace(o, w), cid))
+            n += 1
+        if n:
+            plan.log(f'compare: {n} reference(s) to {os.path.basename(old)} -> {os.path.basename(new)}')
 
 
 def main():
@@ -398,13 +442,14 @@ def main():
             convert_files(folder, plan)
             db.execute('BEGIN IMMEDIATE')
             try:
-                prompt, last = link_job(folder, plan, db, found)
+                prompt = link_job(folder, plan, db, found)
+                relink_compare(db, plan)
                 db.execute('ROLLBACK' if args.dry_run else 'COMMIT')
             except Exception:
                 db.execute('ROLLBACK')
                 raise
             if not args.dry_run:
-                n = write_thumbnails(folder, prompt, last)
+                n = write_thumbnails(folder, prompt)
                 plan.log(f'thumbnails: {n} from sample prompt {prompt + 1}')
                 with open(os.path.join(folder, META, 'convert_log.txt'), 'a', encoding='utf-8') as fh:
                     fh.write(time.strftime('%Y-%m-%d %H:%M:%S') + '\n' + '\n'.join(plan.lines) + '\n\n')

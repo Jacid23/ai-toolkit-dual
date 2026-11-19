@@ -339,8 +339,14 @@ async function serveFile(req: http.IncomingMessage, res: http.ServerResponse, pr
           break;
         }
       }
+      // dual build: a thumb older than its image (made while the image was still being written, or
+      // the image replaced since) is made again
+      const srcStat = await fs.promises.stat(resolvedFilePath).catch(() => null);
+      if (thumbStat && srcStat && srcStat.mtimeMs > thumbStat.mtimeMs) {
+        thumbPath = null;
+        thumbStat = null;
+      }
       if (!thumbStat) {
-        const srcStat = await fs.promises.stat(resolvedFilePath).catch(() => null);
         if (srcStat && srcStat.isFile()) {
           const written = await ensureThumb(resolvedFilePath, thumbBase, srcStat.mtimeMs);
           if (written) {
@@ -382,7 +388,9 @@ async function serveFile(req: http.IncomingMessage, res: http.ServerResponse, pr
       // Weak ETag from inode/size/mtime — cheap and stable enough for
       // revalidation of thumbnails/videos the UI requests over and over.
       const etag = `W/"${stat.ino.toString(36)}-${stat.size.toString(36)}-${stat.mtimeMs.toString(36)}"`;
-      headers['Cache-Control'] = 'public, max-age=86400, immutable';
+      // dual build: revalidated on every use (a cheap 304 by ETag), never 'immutable': a file can be
+      // replaced (a regenerated sample) or caught mid-write, and the browser mustn't keep that copy
+      headers['Cache-Control'] = 'no-cache';
       headers['ETag'] = etag;
       if (req.headers['if-none-match'] === etag) {
         res.writeHead(304, { ETag: etag, 'Cache-Control': headers['Cache-Control'] });

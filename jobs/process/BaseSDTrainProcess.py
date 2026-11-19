@@ -3021,14 +3021,19 @@ class BaseSDTrainProcess(BaseTrainProcess):
         if self.train_config.free_u:
             self.sd.pipeline.disable_freeu()
         if self.accelerator.is_main_process:
-            self.save()
+            # DUAL BUILD: the last save is numbered like every other (<name>_<step>), never a bare
+            # <name>.safetensors, so extending a job never overwrites an earlier file (which fails
+            # with "Access is denied" on Windows while ComfyUI has it loaded). A resume with no steps
+            # left trained nothing, so its last save is already on disk.
+            if self.step_num > start_step_num:
+                self.save(self.step_num)
         if not self.train_config.disable_sampling:
             self.sample(self.step_num)
             self.logger.commit(step=self.step_num)
         print_acc("")
         if self.accelerator.is_main_process:
             self.logger.finish()
-            # DUAL BUILD: each LoRA gets its thumbnail prompt's sample beside it as <name>[_<step>].webp
+            # DUAL BUILD: each LoRA gets its thumbnail prompt's sample beside it as <name>_<step>.webp
             # (samples ComfyUI renders later are added by the UI as they arrive)
             try:
                 from toolkit.job_thumbnails import write_thumbnails
@@ -3036,7 +3041,7 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 prompt_idx = saved() if callable(saved) else None
                 if prompt_idx is None:
                     prompt_idx = int((self.get_conf('sample', {}) or {}).get('thumbnail_prompt', 0) or 0)
-                n = write_thumbnails(self.save_root, prompt_idx, self.step_num)
+                n = write_thumbnails(self.save_root, prompt_idx)
                 print_acc(f"Wrote {n} thumbnail(s) from sample prompt {prompt_idx + 1}")
             except Exception as e:
                 print_acc(f"Thumbnails skipped: {e}")
@@ -3193,7 +3198,7 @@ from diffusers import AutoPipelineForText2Image
 import torch
 
 pipeline = AutoPipelineForText2Image.from_pretrained('{base_model}', torch_dtype={dtype}).to('cuda')
-pipeline.load_lora_weights('{repo_id}', weight_name='{self.job.name}.safetensors')
+pipeline.load_lora_weights('{repo_id}', weight_name='{self.job.name}_{str(self.step_num).zfill(9)}.safetensors')
 image = pipeline('{instance_prompt if not widgets else self.sample_config.prompts[0]}').images[0]
 image.save("my_image.png")
 ```

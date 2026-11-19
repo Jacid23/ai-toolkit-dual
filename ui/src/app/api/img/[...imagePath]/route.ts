@@ -65,9 +65,11 @@ export async function GET(request: NextRequest, { params }: { params: { imagePat
     // transparency survives, everything else stays <name>.<ext>.jpg.
     if (request.nextUrl.searchParams.has('thumb')) {
       const thumbBase = path.join(path.dirname(resolved), '.thumbs', path.basename(resolved));
+      // dual build: a thumb older than its image is stale (the image was replaced or still being written)
+      const srcStat = await fs.promises.stat(resolved).catch(() => null);
       for (const thumbPath of [`${thumbBase}.png`, `${thumbBase}.jpg`]) {
         const thumbStat = await fs.promises.stat(thumbPath).catch(() => null);
-        if (thumbStat && thumbStat.isFile()) {
+        if (thumbStat && thumbStat.isFile() && !(srcStat && srcStat.mtimeMs > thumbStat.mtimeMs)) {
           resolved = thumbPath;
           break;
         }
@@ -90,7 +92,9 @@ export async function GET(request: NextRequest, { params }: { params: { imagePat
 
     // Weak ETag from inode/size/mtime — cheap and stable enough for revalidation
     const etag = `W/"${stat.ino.toString(36)}-${stat.size.toString(36)}-${stat.mtimeMs.toString(36)}"`;
-    const cacheControl = 'public, max-age=86400, immutable';
+    // dual build: revalidated on every use (a cheap 304 by ETag), never 'immutable': a file can be
+    // replaced (a regenerated sample) or caught mid-write, and the browser mustn't keep that copy
+    const cacheControl = 'no-cache';
 
     const ifNoneMatch = request.headers.get('if-none-match');
     if (ifNoneMatch && ifNoneMatch === etag) {

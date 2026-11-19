@@ -86,6 +86,15 @@ const SampleImageCard: React.FC<SampleImageCardProps> = ({
     return () => observer.disconnect();
   }, [observerRoot, rootMargin]);
 
+  // DUAL BUILD: a load that fails (the file was mid-write or just replaced) tries again a little
+  // later, bypassing the browser cache, instead of leaving the card broken
+  const [attempt, setAttempt] = useState(0);
+  const MAX_RETRIES = 3;
+  const retryLater = () => {
+    if (attempt < MAX_RETRIES) window.setTimeout(() => setAttempt(a => a + 1), 1500 * (attempt + 1));
+  };
+  useEffect(() => setAttempt(0), [imageUrl]);
+
   // Drive image loads through fetch + AbortController so scrolling past actually
   // cancels in-flight requests (browsers don't reliably cancel <img> fetches when
   // the element unmounts). A short debounce skips requests entirely during fast
@@ -105,7 +114,10 @@ const SampleImageCard: React.FC<SampleImageCardProps> = ({
       // keep ?thumb=1 for a cheap poster frame; without a thumb they come back
       // as video/* — abort the transfer and render the <video> element instead.
       const thumbQuery = isItVideo ? '?thumb=1' : '';
-      fetch(`/api/img/${encodeFilePathForUrl(imageUrl)}${thumbQuery}`, { signal: controller.signal })
+      fetch(`/api/img/${encodeFilePathForUrl(imageUrl)}${thumbQuery}`, {
+        signal: controller.signal,
+        cache: attempt ? 'reload' : 'default',
+      })
         .then(r => {
           if (!r.ok) throw new Error(`HTTP ${r.status}`);
           const contentType = r.headers.get('content-type') || '';
@@ -126,7 +138,9 @@ const SampleImageCard: React.FC<SampleImageCardProps> = ({
           setLoaded(true);
         })
         .catch(err => {
-          if (err?.name !== 'AbortError') console.error('Sample image fetch failed:', err);
+          if (err?.name === 'AbortError') return;
+          console.error('Sample image fetch failed:', err);
+          if (!cancelled) retryLater();
         });
     }, 80);
 
@@ -139,7 +153,7 @@ const SampleImageCard: React.FC<SampleImageCardProps> = ({
       setLoaded(false);
       setVideoFallback(false);
     };
-  }, [isVisible, isItAudio, isItText, isItVideo, imageUrl]);
+  }, [isVisible, isItAudio, isItText, isItVideo, imageUrl, attempt]);
 
   return (
     <div className={`flex flex-col ${className}`}>
@@ -192,7 +206,7 @@ const SampleImageCard: React.FC<SampleImageCardProps> = ({
                 controls={false}
               />
             ) : blobUrl ? (
-              <img src={blobUrl} alt={alt} className="w-full h-full object-cover" />
+              <img src={blobUrl} alt={alt} className="w-full h-full object-cover" onError={retryLater} />
             ) : null
           ) : null}
 

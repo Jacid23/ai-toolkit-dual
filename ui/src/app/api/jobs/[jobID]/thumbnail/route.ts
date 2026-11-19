@@ -3,7 +3,7 @@ import prisma from '@/server/prisma';
 import { thumbnailPromptOf, writeThumbnails } from '@/server/thumbnails';
 
 // DUAL BUILD: GET → the job's thumbnail prompt. POST { prompt } → make that prompt the job's
-// thumbnails: saved on the job (sample.thumbnail_prompt) and every LoRA's <name>[_<step>].webp
+// thumbnails: saved on the job (sample.thumbnail_prompt) and every LoRA's <name>_<step>.webp
 // beside it rewritten from that prompt's samples.
 export async function GET(request: NextRequest, { params }: { params: Promise<{ jobID: string }> }) {
   const { jobID } = await params;

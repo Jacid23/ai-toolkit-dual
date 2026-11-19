@@ -1,5 +1,5 @@
 // DUAL BUILD: each LoRA in a job folder gets the sample of the job's thumbnail prompt
-// (sample.thumbnail_prompt, default the first) at its step beside it as <name>[_<step>].webp.
+// (sample.thumbnail_prompt, default the first) at its step beside it as <name>_<step>.webp.
 // The writing is toolkit/job_thumbnails.py (PIL has webp; the UI has no image library), the
 // same code the trainer runs when a job ends.
 import { spawn } from 'child_process';
@@ -20,21 +20,10 @@ export const thumbnailPromptOf = (job: { job_config: string }): number => {
   }
 };
 
-const finalStepOf = (job: { job_config: string }): number | null => {
-  try {
-    const v = Number(JSON.parse(job.job_config)?.config?.process?.[0]?.train?.steps);
-    return Number.isFinite(v) && v > 0 ? v : null;
-  } catch {
-    return null;
-  }
-};
-
 // rewrite the job's thumbnails from its thumbnail prompt; resolves with how many were written
 export async function writeThumbnails(job: JobLike): Promise<number> {
   const folder = await jobOutputFolder(job);
   const args = ['-I', path.join(TOOLKIT_ROOT, 'toolkit', 'job_thumbnails.py'), folder, String(thumbnailPromptOf(job))];
-  const final = finalStepOf(job);
-  if (final) args.push(String(final));
   return await new Promise((resolve, reject) => {
     const child = spawn(resolvePythonPath(), args, { cwd: TOOLKIT_ROOT, windowsHide: true });
     let out = '';
