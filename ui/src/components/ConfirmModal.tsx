@@ -47,11 +47,15 @@ export default function ConfirmModal() {
     }
   }, [confirm]);
 
+  // a dialog opened from another's onConfirm (a result after an action) is open again by the time
+  // the timeout fires; only clear when the dialog stayed closed
+  const isOpenRef = useRef(isOpen);
+  isOpenRef.current = isOpen;
   useEffect(() => {
     if (!isOpen) {
       // use timeout to allow the dialog to close before resetting the state
       setTimeout(() => {
-        setConfirm(null);
+        if (!isOpenRef.current) setConfirm(null);
       }, 500);
     }
   }, [isOpen]);
@@ -160,7 +164,7 @@ export default function ConfirmModal() {
                     {confirm?.title}
                   </DialogTitle>
                   <div className="mt-2">
-                    <p className="text-sm text-gray-200">{confirm?.message}</p>
+                    <p className="text-sm text-gray-200 whitespace-pre-line break-words">{confirm?.message}</p>
                     <div className={classNames('mt-4 w-full', { hidden: !confirm?.inputTitle })}>
                       <form onSubmit={(e) => {
                         e.preventDefault()

@@ -21,7 +21,7 @@ export const saveLocationOf = (job: { job_config?: string | null }): string => {
 export const jobRootOf = async (job: JobLike) => saveLocationOf(job) || (await getTrainingFolder());
 
 // the job's output folder: <save location or Training Folder>\<job name>. It holds only the LoRAs,
-// their .webp thumbnails (<name>[_<step>].webp) and LoRA Manager's <lora>.metadata.json
+// their .webp thumbnails (<name>_<step>.webp) and LoRA Manager's <lora>.metadata.json
 export const jobOutputFolder = async (job: JobLike) => path.join(await jobRootOf(job), job.name);
 
 // everything else the job keeps (config, log.txt, logs\, loss_log.db, optimizer.pt, samples\,
@@ -31,6 +31,9 @@ export const jobMetaFolder = async (job: JobLike) => path.join(await jobOutputFo
 
 // every save location a job uses, for the file routes' allowed roots
 let rootsCache: { at: number; roots: string[] } | null = null;
+export const clearRootsCache = () => {
+  rootsCache = null;
+};
 export async function saveLocationRoots(): Promise<string[]> {
   if (rootsCache && Date.now() - rootsCache.at < 10000) return rootsCache.roots;
   const jobs = await prisma.job.findMany({ select: { job_config: true } });

@@ -10,7 +10,7 @@ import { ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { Job } from '@prisma/client';
 import classNames from 'classnames';
-import { ChevronDown, ChevronRight, Columns3, Folder, Search, Tag, X } from 'lucide-react';
+import { ChevronDown, ChevronRight, Columns3, Folder, RefreshCw, Search, Tag, X } from 'lucide-react';
 import { CgSpinner } from 'react-icons/cg';
 import JobActionBar from '@/components/JobActionBar';
 import SampleImageViewer from '@/components/SampleImageViewer';
@@ -240,11 +240,67 @@ export default function JobsExplorer({
       return next;
     });
 
-  const loadInfos = () =>
+  const loadInfos = (fresh = false) =>
     apiClient
-      .get('/api/jobs/explore')
+      .get(`/api/jobs/explore${fresh ? '?fresh=1' : ''}`)
       .then(r => setInfos(r.data?.jobs ?? {}))
       .catch(() => {});
+
+  // --- moved trainings: Rescan finds every lost job folder by its id, Locate finds one job's -----
+  const [rescanning, setRescanning] = useState(false);
+  const showRelocated = (title: string, d: any) => {
+    const lines: string[] = [];
+    for (const r of d.fixed ?? [])
+      lines.push(`✓ ${r.name}${r.renamedTo ? ` → renamed ${r.renamedTo}` : ''}\n    ${r.to}`);
+    for (const r of d.failed ?? []) lines.push(`✗ ${r.name}: ${r.error}`);
+    for (const a of d.ambiguous ?? [])
+      lines.push(`? ${a.name} is in more than one folder, Locate it:\n    ${a.folders.join('\n    ')}`);
+    if (d.notFound?.length) lines.push(`Not found (use Locate on the row): ${d.notFound.join(', ')}`);
+    openConfirm({
+      title,
+      message: lines.length ? lines.join('\n') : 'Every training is where its job says it is.',
+      type: 'info',
+      confirmText: 'OK',
+    });
+  };
+  const afterRelocate = async () => {
+    await loadInfos(true);
+    onRefresh();
+  };
+  const rescan = async () => {
+    setRescanning(true);
+    try {
+      const r = await apiClient.post('/api/jobs/relocate', {});
+      showRelocated('Rescan locations', r.data);
+    } catch (e: any) {
+      showRelocated('Rescan locations', { failed: [{ name: 'Rescan', error: e?.response?.data?.error ?? String(e) }] });
+    } finally {
+      setRescanning(false);
+      afterRelocate();
+    }
+  };
+  const locate = (job: Job) =>
+    openConfirm({
+      title: `Locate ${job.name}`,
+      message:
+        'Paste the folder it was moved to: its own folder or any folder above it (a group, a drive). The job is found there by its id.',
+      type: 'info',
+      confirmText: 'Locate',
+      inputTitle: 'J:\\Training\\outputs\\Krea2',
+      onConfirm: async v => {
+        const folder = (v ?? '').trim();
+        if (!folder) return;
+        try {
+          const r = await apiClient.post('/api/jobs/relocate', { jobId: job.id, folder });
+          showRelocated(`Locate ${job.name}`, r.data);
+        } catch (e: any) {
+          showRelocated(`Locate ${job.name}`, {
+            failed: [{ name: job.name, error: e?.response?.data?.error ?? String(e) }],
+          });
+        }
+        afterRelocate();
+      },
+    });
   useEffect(() => {
     loadInfos();
     const t = setInterval(loadInfos, 30000);
@@ -487,6 +543,16 @@ export default function JobsExplorer({
           <span className="text-xs text-gray-500">
             {shown.length} of {rows.length}
           </span>
+          <button
+            type="button"
+            onClick={rescan}
+            disabled={rescanning}
+            title="Find trainings whose folder was moved (by the job id in each folder) and point their jobs at it"
+            className="flex items-center gap-1 text-sm bg-gray-800 hover:bg-gray-700 border border-gray-700 rounded-md px-2 py-1 disabled:opacity-60"
+          >
+            <RefreshCw className={classNames('w-4 h-4', rescanning && 'animate-spin')} />
+            {rescanning ? 'Rescanning…' : 'Rescan locations'}
+          </button>
           <div className="relative">
             <button
               type="button"
@@ -721,7 +787,17 @@ export default function JobsExplorer({
                         </div>
                       )}
                       {row.info && !row.info.folderExists && (
-                        <div className="text-[11px] text-red-400 mt-0.5">folder not found</div>
+                        <div className="text-[11px] text-red-400 mt-0.5">
+                          folder not found ·{' '}
+                          <button
+                            type="button"
+                            onClick={() => locate(job)}
+                            disabled={['running', 'queued', 'stopping'].includes(job.status)}
+                            className="underline hover:text-red-300"
+                          >
+                            Locate…
+                          </button>
+                        </div>
                       )}
                     </td>
                     {columns.map(c => (

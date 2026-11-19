@@ -124,12 +124,15 @@ export default function JobPage({ params }: { params: { jobID: string } }) {
     title = `Inference Engine: ${job?.name || 'Loading...'}`;
   }
 
+  // DUAL BUILD: back to the page the job is listed on: Queue while queued/running, else Trainings
+  const backTo = !job || ['queued', 'running', 'stopping'].includes(job.status) ? '/jobs' : '/trainings';
+
   return (
     <>
       {/* Fixed top bar */}
       <TopBar>
         <div className="flex-shrink-0">
-          <Button className="text-gray-500 dark:text-gray-300 pl-0 pr-1 sm:px-3 mt-1" onClick={() => redirect('/jobs')}>
+          <Button className="text-gray-500 dark:text-gray-300 pl-0 pr-1 sm:px-3 mt-1" onClick={() => redirect(backTo)}>
             <FaChevronLeft />
           </Button>
         </div>
@@ -143,7 +146,7 @@ export default function JobPage({ params }: { params: { jobID: string } }) {
             onRefresh={refreshJob}
             hideView
             afterDelete={() => {
-              redirect('/jobs');
+              redirect('/trainings');
             }}
             autoStartQueue={true}
           />

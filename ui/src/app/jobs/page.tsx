@@ -22,9 +22,9 @@ export default function Dashboard() {
           </Link>
         </div>
       </TopBar>
-      {/* DUAL BUILD: the page doesn't scroll; the jobs list scrolls in its own card */}
+      {/* DUAL BUILD: the GPU queues; idle trainings are on the Trainings page */}
       <MainContent className="overflow-hidden">
-        <JobsTable />
+        <JobsTable view="queue" />
       </MainContent>
     </>
   );

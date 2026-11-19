@@ -3,6 +3,7 @@ import prisma from '@/server/prisma';
 import path from 'path';
 import fs from 'fs';
 import { jobRootOf } from '@/server/jobFolders';
+import { folderMapper, remapComparePaths } from '@/server/relocateJobs';
 
 // DUAL BUILD: POST { name } → rename a training that isn't running: its folder, every
 // <name>[_<step>].<ext> in it (LoRAs, thumbnails), the job, and the paths Compare keeps of its LoRAs.
@@ -56,30 +57,13 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
   }
 
   // a path under the old folder, with the file's own <old> prefix renamed too
-  const mapPath = (p: string) => {
-    if (p === oldFolder) return newFolder;
-    if (!p.startsWith(oldFolder + path.sep)) return p;
-    const rest = p.slice(oldFolder.length + 1);
-    const renamed = !rest.includes(path.sep) && (rest.startsWith(old + '_') || rest.startsWith(old + '.')) ? name + rest.slice(old.length) : rest;
-    return path.join(newFolder, renamed);
-  };
-  const mapDeep = (v: any): any =>
-    typeof v === 'string' ? mapPath(v) : Array.isArray(v) ? v.map(mapDeep) : v && typeof v === 'object' ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, mapDeep(x)])) : v;
+  const { mapPath, mapDeep } = folderMapper(oldFolder, newFolder, old, name);
 
   const cfg = JSON.parse(job.job_config);
   if (cfg?.config) cfg.config.name = name;
   await prisma.$transaction(async tx => {
     await tx.job.update({ where: { id: jobID }, data: { name, job_config: JSON.stringify(cfg), updated_at: job.updated_at } });
-    for (const c of await tx.compareCell.findMany({ where: { lora_path: { startsWith: oldFolder + path.sep } } })) {
-      await tx.compareCell.update({
-        where: { id: c.id },
-        data: { lora_path: mapPath(c.lora_path), image_path: c.image_path ? mapPath(c.image_path) : c.image_path },
-      });
-    }
-    for (const cmp of await tx.comparison.findMany()) {
-      if (!cmp.data.includes(JSON.stringify(oldFolder).slice(1, -1))) continue;
-      await tx.comparison.update({ where: { id: cmp.id }, data: { data: JSON.stringify(mapDeep(JSON.parse(cmp.data))) } });
-    }
+    await remapComparePaths(tx, oldFolder, mapPath, mapDeep);
   });
 
   return NextResponse.json({
