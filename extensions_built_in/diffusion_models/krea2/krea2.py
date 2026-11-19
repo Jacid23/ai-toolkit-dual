@@ -97,17 +97,20 @@ scheduler_config = {
 
 # Defaults; both overridable via model.model_kwargs.
 # LOCAL MODEL ROUTING (dual build): models live in this install's own models
-# folder (MODELS_PATH, ComfyUI layout). Nothing is read from other drives.
+# folder (MODELS_PATH). Nothing is read from other drives.
+#   - HF repo ids (krea/Krea-2-Raw) are the repo copy at models/hf/<org>/<repo>
+#     (toolkit.hf_local), so the model's own vae/ and text_encoder/ are found.
 #   - text encoder: model_kwargs.text_encoder_path (the UI dropdown) when set,
 #     otherwise the encoder bundled with the model (<name_or_path>/text_encoder),
 #     otherwise the HF repo below.
 #   - VAE: model_kwargs.vae_path, else the model's own vae/, else the HF repo.
 # Job paths from old installs ("<drive>:/.../Trainers/<name>") are swapped
-# for the same <name> under MODELS_PATH when it exists there.
+# for the same <name> under models/hf/<org>/ or a root below when it exists.
 from toolkit.paths import MODELS_PATH
+from toolkit.hf_local import HF_MODELS_PATH, repo_dir
 
+# user-picked files and folders outside the hf layout (text_encoders/, K2adapter/, ...)
 LOCAL_MODEL_ROOTS = [
-    os.path.join(MODELS_PATH, "diffusion_models"),
     os.path.join(MODELS_PATH, "text_encoders"),
     MODELS_PATH,
 ]
@@ -126,6 +129,41 @@ def _vae_dir_has_weights(p) -> bool:
     )
 
 
+_VAE_WEIGHT_FILES = ("diffusion_pytorch_model.safetensors", "diffusion_pytorch_model.bin")
+
+
+def _resolve_vae_source(p):
+    """Turn a model_kwargs.vae_path into something the loader can open, or
+    return it unchanged. Accepted forms:
+      - a single .safetensors file (diffusers or ComfyUI wan layout)
+      - a checkpoint dir holding vae/ (e.g. a diffusers repo copy)
+      - the vae folder itself (config.json + weights directly inside)
+      - an HF repo id whose copy lives under models/hf/<org>/<repo>
+    """
+    if not isinstance(p, str) or p.endswith(".safetensors"):
+        return p
+    if not os.path.isdir(p) and "/" in p and not os.path.isabs(p):
+        local = repo_dir(p)
+        # a repo copy without VAE weights stays an HF id, so hf_local fetches
+        # the vae/ files into that same folder instead of failing on it
+        if _vae_source_has_weights(local):
+            return local
+    return p
+
+
+def _vae_source_has_weights(p) -> bool:
+    """Like _vae_dir_has_weights, but a vae folder holding its weights
+    directly (no vae/ subfolder) also counts. Only for user-picked VAE paths:
+    a model checkpoint root is never treated as a VAE folder."""
+    if _vae_dir_has_weights(p):
+        return True
+    if not isinstance(p, str) or not os.path.isdir(p):
+        return False
+    return os.path.isfile(os.path.join(p, "config.json")) and any(
+        os.path.isfile(os.path.join(p, f)) for f in _VAE_WEIGHT_FILES
+    )
+
+
 def _te_dir_has_weights(p) -> bool:
     """True if ``p`` is a local HF-format text encoder folder with weights."""
     if not isinstance(p, str) or not os.path.isdir(p):
@@ -133,14 +171,6 @@ def _te_dir_has_weights(p) -> bool:
     if not os.path.isfile(os.path.join(p, "config.json")):
         return False
     return any(f.endswith((".safetensors", ".bin")) for f in os.listdir(p))
-
-
-def _first_local(name, check=os.path.isdir):
-    for root in LOCAL_MODEL_ROOTS:
-        p = os.path.join(root, name)
-        if check(p):
-            return p
-    return None
 
 
 def _find_local_file(filename):
@@ -160,8 +190,9 @@ def _find_local_file(filename):
 
 def _prefer_local_copy(path):
     """Map a model path to this install's own copy under MODELS_PATH:
-      - old ``<drive>:/.../Trainers/<name>`` paths -> ``<root>/<name>``
-      - HF repo ids (``krea/Krea-2-Turbo``) -> ``<root>/Krea-2-Turbo``
+      - HF repo ids (``krea/Krea-2-Turbo[/sub/path]``) -> ``models/hf/krea/Krea-2-Turbo[/sub/path]``
+      - old ``<drive>:/.../Trainers/<name>`` paths -> ``models/hf/<org>/<name>``
+        or ``<root>/<name>``
       - HF file paths (``ostris/<repo>/<file>.safetensors``) -> ``<root>/<repo>/<file>``
         or the same file name one folder below a root (``K2adapter/<file>``)
     Anything without a local copy is returned unchanged (HF downloads it)."""
@@ -171,6 +202,11 @@ def _prefer_local_copy(path):
     idx = norm.lower().rfind(os.sep + "trainers" + os.sep)
     if idx >= 0:
         rel = norm[idx + len(os.sep + "trainers" + os.sep):]
+        if os.path.isdir(HF_MODELS_PATH):
+            for org in sorted(os.listdir(HF_MODELS_PATH)):
+                local = os.path.join(HF_MODELS_PATH, org, rel)
+                if os.path.exists(local):
+                    return local
         for root in LOCAL_MODEL_ROOTS:
             local = os.path.join(root, rel)
             if os.path.exists(local):
@@ -182,6 +218,9 @@ def _prefer_local_copy(path):
     parts = [p for p in path.replace("\\", "/").split("/") if p]
     if len(parts) < 2:
         return path
+    local = repo_dir("/".join(parts))
+    if os.path.exists(local):
+        return local
     rel = os.path.join(*parts[1:])  # drop the org
     for root in LOCAL_MODEL_ROOTS:
         local = os.path.join(root, rel)
@@ -195,7 +234,9 @@ def _prefer_local_copy(path):
 
 
 QWEN3_VL_PATH = "Qwen/Qwen3-VL-4B-Instruct"
-QWEN_IMAGE_VAE_PATH = _first_local("Krea-2-Raw", _vae_dir_has_weights) or "Qwen/Qwen-Image"
+QWEN_IMAGE_VAE_PATH = (
+    repo_dir("krea/Krea-2-Raw") if _vae_dir_has_weights(repo_dir("krea/Krea-2-Raw")) else "Qwen/Qwen-Image"
+)
 
 HF_TOKEN = os.getenv("HF_TOKEN", None)
 
@@ -402,11 +443,15 @@ class Krea2Model(QwenImageVAEHolderMixin, BaseModel):
             else QWEN_IMAGE_VAE_PATH
         )
         vae_path = self.model_config.model_kwargs.get("vae_path", default_vae)
+        if not vae_path:  # UI sends "" when no VAE is picked
+            vae_path = default_vae
+        vae_path = _resolve_vae_source(vae_path)
         # DUAL BUILD: a single-file VAE (.safetensors, e.g. the community Wan2.1
-        # VAE) is valid — load_model loads single files and takes the architecture
-        # config from the known-good Qwen-Image VAE (same wan-style arch). Only a
-        # dir whose vae/ has no real weights (config + previews only) or a missing
-        # path falls back to the bundled VAE instead of crashing.
+        # VAE) is valid — load_model loads single files (QwenImageVAE converts the
+        # ComfyUI wan key layout) and takes the architecture config from the
+        # known-good Qwen-Image VAE (same wan-style arch). Only a dir with no real
+        # weights (config + previews only) or a missing path falls back to the
+        # bundled VAE instead of crashing.
         is_single_file = (
             isinstance(vae_path, str)
             and vae_path.endswith(".safetensors")
@@ -415,7 +460,7 @@ class Krea2Model(QwenImageVAEHolderMixin, BaseModel):
         config_path = QWEN_IMAGE_VAE_PATH if is_single_file else None
         if (
             not is_single_file
-            and not _vae_dir_has_weights(vae_path)
+            and not _vae_source_has_weights(vae_path)
             and _vae_dir_has_weights(QWEN_IMAGE_VAE_PATH)
         ):
             self.print_and_status_update(

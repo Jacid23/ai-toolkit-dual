@@ -14,7 +14,7 @@ set CONDA_DEFAULT_ENV=
 set PYENV_ROOT=
 set PYENV_VERSION=
 
-set "path=%~dp0..\..\python_embeded_dual_v2;%~dp0..\..\python_embeded_dual_v2\Scripts;%path%"
+set "path=%~dp0..\..\python_embeded_dual_v3;%~dp0..\..\python_embeded_dual_v3\Scripts;%path%"
 set GIT_LFS_SKIP_SMUDGE=1
 
 echo.

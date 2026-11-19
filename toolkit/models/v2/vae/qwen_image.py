@@ -10,6 +10,19 @@ class QwenImageVAE(AutoencoderKLQwenImage, OstrisModelMixin):
 
     aitk_subfolder = "vae"
 
+    @classmethod
+    def convert_state_dict_on_load(cls, state_dict):
+        """Single-file wan-family VAEs (ComfyUI's wan_2.1_vae, K2 Real VAE,
+        hyperVAE, ...) ship the original Wan key layout ("encoder.conv1",
+        "encoder.middle.0", ...). Qwen-Image's VAE is the same architecture, so
+        diffusers' own Wan converter maps them onto these keys. Files already
+        in diffusers layout pass through untouched."""
+        if "encoder.conv1.weight" in state_dict and "encoder.conv_in.weight" not in state_dict:
+            from diffusers.loaders.single_file_utils import convert_wan_vae_to_diffusers
+
+            return convert_wan_vae_to_diffusers(dict(state_dict))
+        return state_dict
+
 
 class QwenImageVAEHolderMixin:
     """BaseModel-side encode_images/decode_latents for models whose self.vae
